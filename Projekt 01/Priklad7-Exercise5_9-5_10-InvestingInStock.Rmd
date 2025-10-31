@@ -1,0 +1,295 @@
+---
+title: "Exercise 5.9 - 5.10 - Investing in stock with data"
+subtitle: "Prior model for Exercise 5.9 + Updating with data (5.10)"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 5, fig.height = 3, fig.align = "center")
+```
+
+## Úvod
+
+Riešenie cvičenia 5.9 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-5#exercises-4) 
+Modelovanie ceny investície počas dňa normálnym rozdelením <br>
+a cvičenia 5.10 z rovnakej knihy Update apriórneho modelu o dáta
+
+
+```{r libraries, echo =FALSE}
+library(bayesrules)
+library(janitor)
+library(dplyr)
+library(ggplot2)
+```
+
+## Exercise 5.9: Investing in Stock
+
+> You just bought stock in FancyTech. Let random variable $\mu$, be the average dollar amount that your FancyTech stock goes up or down in a one-day period. At first, you believe that $\mu$ is 7.2 dollars with a standard deviation of 2.6 dollars. <br>
+> a. Tune and plot an appropriate Normal prior model for$\mu$.<br>
+> b. According to your plot, does it seem plausible that the FancyTech stock would increase by an average of 7.6 dollars in a day? <br>
+> c. Does it seem plausible that the FancyTech stock would increase by an average of 4 dollars in a day? <br>
+> d. What is the prior probability that, on average, the stock price goes down? Hint: `pnorm()`. <br>
+> e. What is the prior probability that, on average, your stock price goes up by more than 8 dollars per day? 
+
+
+## Solution:
+### a. Apriórny model Normal pre $\mu$
+Na začiatku veríme, že stredná hodnota je 7.2 a odchýlka 2.6. To sú teda parametre apriórneho normálneho modelu. Smerodajná odchýlka vyjadruje našu neistotu ohľadom strednej hodnoty.<br>
+**Hyperparametre:**
+$\theta$ = apriorna stredná hodnota pre $\mu$ <br>
+$\tau$ = apriórna smerodajná odchýlka (miera neistoty v odhade $\mu$)
+
+>\begin{equation}
+\begin{split}
+\mu \sim N(\theta = 7.2, \tau^2 = 2.6^2)
+\end{split}
+\end{equation}
+
+#### Graf - apriórny model:
+```{r prior-graph, echo = FALSE}
+theta <- 7.2
+tau <- 2.6
+plot_normal(mean = theta, sd = tau)
+```
+
+### b. Vierohodnosť hodnoty 7.6
+```{r value-76, echo = FALSE}
+value <- 7.6
+plot_normal(mean = theta, sd = tau) +
+  geom_vline(xintercept = value, color = 'red', linetype = 'solid')
+
+cat(
+  'Výška krivky v bode', value, 'je', dnorm(x = value, mean = theta, sd = tau), '\n',
+  'Výška krivky v strednej hodnote je', dnorm(x = theta, mean = theta, sd = tau), '\n',
+  'Vzdialenosť hodnoty', value, 'od strednej hodnoty je',
+  abs((value - theta)/tau), '-násobok smerodajnej odchýlky.\n',
+  sep = ' '
+)
+
+```
+Hodnota 7.6 je blízko strednej hodnoty 7.2. Je teda vysoko vierohodná.
+
+### c. Vierohodnosť hodnoty 4
+```{r value-4, echo = FALSE}
+value <- 4
+plot_normal(mean = theta, sd = tau) +
+  geom_vline(xintercept = value, color = 'red', linetype = 'solid')
+
+cat ('Výška krivky v bode', value, 'je', dnorm(x = value, mean = theta, sd = tau))
+cat ('Výška krivky v strednej hodnote je', dnorm(x = theta, mean = theta, sd = tau))
+cat ('Vzdialenosť hodnoty ', value, ' od strednej hodnoty je ', abs((value - theta)/tau), '-násobok smerodajnej odchýlky.', sep = '')
+```
+Hodnota 4 je ďalej od strednej hodnoty 7.2. Je teda oveľa menej vierohodná.
+
+
+### d. Pravdepodobnosť poklesu
+```{r prob-down, echo = FALSE}
+value <- 0
+plot_normal(mean = theta, sd = tau) +
+  stat_function(fun = dnorm, args = list(mean = theta, sd = tau),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(-5, value)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť, že cena bude klesať je', round(pnorm(q = value, mean = theta, sd = tau), 4))
+
+```
+### e. Pravdepodobnosť rastu o viac ako 8
+```{r prob-up-8, echo = FALSE}
+value <- 8
+plot_normal(mean = theta, sd = tau) +
+  stat_function(fun = dnorm, args = list(mean = theta, sd = tau),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(value, 20)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť, že cena bude rásť o viac ako', value, 'je', round(pnorm(q = value, mean = theta, sd = tau, lower.tail = FALSE), 4))
+
+```
+
+## Exercise 5.10: Investing in Stock with data
+
+> Continuing with Exercise 5.9, it’s reasonable to assume that the daily changes in FancyTech stock value are Normally distributed around 
+an unknown mean of $\mu$ with a known standard deviation of $\sigma = 2$  dollars. On a random sample of 4 days, you observe changes in stock value of $-0.7$, $1.2$, $4.5$, and $-4$ dollars. <br>
+> a. Plot the corresponding likelihood function of $\mu$. <br>
+> b. Plot the prior pdf, likelihood function, and the posterior pdf for $\mu$. <br>
+> c. Use 'summarize_normal_normal()' to calculate descriptive statistics for the prior and the posterior models. <br>
+> d. Comment on how your understanding about $\mu$ evolved from the prior (in the previous exercise) to the posterior based on the observed data. <br>
+> e. What is the posterior probability that, on average, the stock price goes down? Hint: `pnorm()`. <br>
+> f. What is the posterior probability that, on average, your stock price goes up by more than 8 dollars per day?
+
+
+## Solution:
+### a. Vierohodnostný model pre $\mu$
+#### Dáta: 4 pozorovania na burze
+
+```{r }
+y <- c(-0.7, 1.2, 4.5, -4)
+sd <- 2
+
+```
+
+> Neznámy hyperparameter $\mu$ má normálne rozdelenie.
+>\begin{equation}
+\begin{split}
+\mu \sim N(\theta = 7.2, \tau^2 = 2.6^2)
+\end{split}
+\end{equation}
+
+> Za predpokladu, že poznáme $\mu$, tak zmenu ceny na burze modelujeme normálnym rozdelením. T.j. vierohodnostná funkcia je:
+> \begin{split}
+Y | \mu & {\sim} N(\mu, \sigma^2) \\
+\end{split}
+
+> Označme ($Y_1$,$Y_2$,\ldots,$Y_n$) zmeny na burze v jednotlivých pozorovaných dňoch. Zmena ceny za jeden deň je **nezávisle** modelovaná normálnym modelom. 
+> \begin{split}
+Y_i | \mu & \stackrel{ind}{\sim} \text{N}(\mu, \sigma^2) \\
+\end{split}
+
+> Neanalyzujeme však každý deň samostatne, využijeme súhrnnú informáciu zo všetkých dní, t.j. máme funkciu združenej hustoty pravdepodobnosti: <br><br>
+> **Združená hustota pravdepodobnosti**<br>
+><ul><li>Nech $(Y_1,Y_2,\ldots,Y_n)$ sú nezávislé pozorovania náhodnej premennej a $\vec{y} = (y_1,y_2,\ldots,y_n)$ je vektor týchto pozorovaní </li>
+><li>$f(y_i | \mu)$ označuje funkciu hustoty pre jedno pozorovanie $Y_i$.</li></ul>
+>Za predpokladu nezávislosti potom možeme napísať združenú funkciu hustoty pre vektor zistených dát:<br>
+> \begin{equation}
+f(\vec{y} | \mu) = \prod_{i=1}^{n}f(y_i|\mu) = \prod_{i=1}^{n}\frac{1}{\sqrt{2\pi\sigma^2}}\exp\bigg[{-\frac{(y_i-\mu)^2}{2\sigma^2}}\bigg]  
+> \end{equation}
+
+> Teda máme vierohodnostnú funkciu pre $\mu$ (tá je rovnaká ako združená hustota, líši sa len pochopením parametra)<br>
+\begin{equation}
+L(\mu |\vec{y}) \propto \prod_{i=1}^{n} \exp\bigg[{-\frac{(y_i-\mu)^2}{2\sigma^2}}\bigg] =  \exp\bigg[{-\frac{\sum_{i=1}^n(y_i-\mu)^2}{2\sigma^2}}\bigg]
+\end{equation}
+
+> Po zjednodušení s využitím $y$ (priemer $y_i$) a $n$ (počet) dostávame proporcionálnu funkciu k vierohodnostnej:
+\begin{equation}
+L(\mu | \vec{y}) \propto \exp\bigg[{-\frac{(\bar{y}-\mu)^2}{2\sigma^2/n}}\bigg] \;\;\;\; \text{ for } \; \mu \in (-\infty, \infty)
+\end{equation}
+
+#### Graf pre vierohodnostnú funkciu (likehood)
+
+Graf zobrazuje (neškálovanú) vierohodnosť získaných dát za predpokladu, že by parameter $\mu$ bol postupne z intervalu približne  [-4; 4]
+```{r likelihood}
+# Vierohodnostná funkcia
+plot_normal_likelihood(y = y, sigma = sd) # odchylku neodhadujeme, je urcena vopred
+
+```
+
+#### Vierohodnostná funkcia podľa vzorca pre naše dáta: 
+Pre naše dáta: 
+```{r likehood-hodnoty, echo = FALSE}
+cat('Známa odchýlka sigma: ', sd, '\nPriemer pozorovaných hodnôt: ', mean(y), ', ', 'počet pozorovaných hodnôt: ', length(y), sep ='')
+```
+\begin{equation}
+L(\mu | \vec{y}) \propto \exp\bigg[{-\frac{(\bar{0.25}-\mu)^2}{2\cdot2^2/4}}\bigg] = \exp\bigg[{-\frac{(\bar{0.25}-\mu)^2}{2}}\bigg]
+\end{equation}
+
+```{r likelihood-formula}
+# Vierohodnostná funkcia podla vzorca
+xl <- seq(from = -4, to = 4, length = 501)
+yl <- exp(-(0.25-xl)^2/1.6)
+df <- data.frame(xl, yl)
+ggplot(data = df, mapping = aes(x = xl, y = yl)) +
+  geom_line() +
+  labs(x = expression(mu), y = expression(L(mu~"|"~y)))
+```
+
+### b. Vykresliť priorné pdf, vierohodnostnú funkciu a posteriorné pdf pre $\mu$
+**Posteriorný model**
+Posteriorny model je proporcionálny súčinu apriorneho modelu a vierohodnostného modelu: <br>
+
+> Na začiatku apriórny model, ktorý má Gamma rozdelenie: <br>
+> \begin{split}
+> \mu \sim N(\theta, \tau^2) \\
+> \end{split}
+
+> Jednotlivé pozorovania majú normálne rozdelenie: 
+> \begin{split}
+> Y_i | \mu \; \sim \; N(\mu, \sigma^2) \\
+> \end{split}
+
+> Na základe apriórneho modelu a pozorovania dát --> posteriórny Normal model:<br>
+> \begin{equation}
+> \mu|\vec{y} \; \sim \;  N\bigg(\theta\frac{\sigma^2}{n\tau^2+\sigma^2} + \bar{y}\frac{n\tau^2}{n\tau^2+\sigma^2}, \; \frac{\tau^2\sigma^2}{n\tau^2+\sigma^2}\bigg)
+> \end{equation}
+> kde $\overline{y}$ je priemernou hodnotou poZorovaní $\vec{y} = (y_1,y_2,\ldots,y_n)$
+
+#### Graf pre apriórný, vierohodnostný aj posteriórny model
+V grafe vidíme rozdelenia všetkých troch modelov. 
+```{r posterior-plot}
+# Zobrazenie prioru, vierohodnosti a posterioru
+  # theta, tau - from prior
+  # sd - supposed to be constant
+  # y_bar, n - from data
+plot_normal_normal(mean = theta, sd = tau, sigma = sd, y_bar = mean(y) , n = length(n))
+```
+
+#### Posteriórny model pre naše dáta podľa vzorca
+> \begin{split}
+> \mu|\vec{y} & \sim N\bigg(\theta\frac{\sigma^2}{n\tau^2+\sigma^2} + \bar{y}\frac{n\tau^2}{n\tau^2+\sigma^2}, \frac{\tau^2\sigma^2}{n\tau^2+\sigma^2}\bigg) \\
+> \mu|\vec{y} & \sim N\bigg(7.2\cdot\frac{2^2}{4\cdot2.6^2+2^2} + {0.25}\frac{4*2.6^2}{4\cdot2.6^2+2^2}, \frac{2.6^2*2^2}{4*2.6^2+2^2}\bigg) \\
+> \mu|\vec{y} & \sim N\bigg(1.1456, 0.9333\bigg)
+> \end{split}
+
+```{r posterior-hodnoty, echo = FALSE}
+# Posteriórny model podla vzorca
+  # theta, tau - from prior
+  # sd - supposed to be constant
+  # y_bar, n - from data
+
+y_n <- length(y)
+y_mean <- mean(y)
+menovatel <- y_n * tau^2 + sd^2
+
+mu_post <- theta * sd^2/menovatel + y_mean * y_n * tau^2 / menovatel
+sigma_post <- sqrt(tau^2 * sd^2 / menovatel)
+
+cat('Vypočítaná stredná hodnota pre posterior podľa vzorca: ', mu_post, '\nsmerodajná odchýlka: ', sigma_post, sep ='')
+plot_normal(mu_post, sigma_post)
+```
+
+### c. Porovnať charakteristiky apriórneho a posteriórneho modelu
+```{r posterior-summarize, echo = FALSE}
+# Posteriórny model pomocou funkcie:
+summarize_normal_normal(mean = theta, sd = tau, sigma = sd, y_bar = y_mean , n = y_n)
+
+cat('Váha strednej hodnoty z priórneho modelu je: ',  sd^2/menovatel, 
+    '\nváha strednej hodnoty z dát je: ', y_n * tau^2 / menovatel, sep ='')
+
+```
+
+### d. Zhodnotenie výsledkov
+Na začiatku sme predpokladali, že priemerná zmena akcie je 7,2+-2,6. Avšak pozorované dáta majú priemer len 0,25. Preto sa stredná  hodnota aposteriórnej hustoty výrazne posunula doľava do 1,146. Posteriórny model je váženým priemerom priórnej hustoty a dát. Váha apriórnej strednej hodnoty je oveľa nižšia ako z dát, preto je posteriórna stredná hodnota bližšia k dátovej. 
+
+### e. Pravdepodobnosť poklesu pre posteriórny model
+```{r prob-down-post, echo = FALSE}
+value <- 0
+plot_normal(mean = mu_post, sd = sigma_post) +
+  stat_function(fun = dnorm, args = list(mean = mu_post, sd = sigma_post),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(-5, value)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť poklesu: \nPôvodne: ', round(pnorm(q = value, mean = theta, sd = tau), 4),
+     '\nTeraz', round(pnorm(q = value, mean = mu_post, sd = sigma_post), 4))
+```
+
+### f. Pravdepodobnosť rastu o viac ako 8 pre posteriórny model
+```{r prob-up-8-post, echo = FALSE}
+value <- 8
+plot_normal(mean = mu_post, sd = sigma_post) +
+  stat_function(fun = dnorm, args = list(mean = mu_post, sd = sigma_post),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(value, 10)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť rastu o viac ako 8: \nPôvodne: ', round(pnorm(q = value, mean = theta, sd = tau, lower.tail = FALSE), 4),
+     '\nTeraz', round(pnorm(q = value, mean = mu_post, sd = sigma_post, lower.tail = FALSE), 4))
+
+```

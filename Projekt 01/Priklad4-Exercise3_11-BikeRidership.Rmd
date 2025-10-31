@@ -1,0 +1,412 @@
+---
+title: "Exercise 3.11 - Regular Bike Ridership"
+subtitle: "Beta-Binomial model pre proporciu cyklistov"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+
+## Úvod
+
+Riešenie cvičenia 3.11 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-3#exercises-2) 
+
+Použitie Beta-Binomial modelu na odhad proporcie študentov, ktorí sú pravidelnými cyklistami.
+
+```{r libraries, echo=FALSE}
+library(bayesrules)
+library(ggplot2)
+library(dplyr)
+```
+
+## Exercise 3.11: Regular Bike Ridership
+
+> A university wants to know what proportion of students are regular bike riders, $\pi$, so that they can install an appropriate number of bike racks. Since the university is in sunny Southern California, staff think that $\pi$ has a mean of 1 in 4 students, and a mode of 5/22.
+>
+> a. Specify and plot a Beta model that reflects the staff's prior ideas about $\pi$.
+>
+> b. Among 50 surveyed students, 15 are regular bike riders. What is the posterior model for $\pi$?
+>
+> c. What is the mean, mode, and standard deviation of the posterior model?
+>
+> d. Does the posterior model more closely reflect the prior information or the data? Explain your reasoning.
+
+## Zadanie úlohy
+
+### Kontext
+
+**Parameter záujmu:** $\pi$ = proporcia študentov, ktorí sú pravidelnými cyklistami
+
+**Dané informácie o priore:**
+
+- Stredná hodnota: $E(\pi) = \frac{1}{4} = 0.25$
+- Modus: $\text{Mode}(\pi) = \frac{5}{22} \approx 0.2273$
+
+**Dáta z prieskumu:**
+
+- Počet opýtaných študentov: $n = 50$
+- Počet pravidelných cyklistov: $y = 15$
+
+## Solution
+
+### a. Špecifikácia a vykreslenie apriórneho Beta modelu
+
+#### Výpočet parametrov $\alpha$ a $\beta$ z prioru
+
+Pre Beta($\alpha, \beta$) rozdelenie platí:
+
+\begin{align}
+E(\pi) &= \frac{\alpha}{\alpha + \beta} \\
+\text{Mode}(\pi) &= \frac{\alpha - 1}{\alpha + \beta - 2} \quad \text{pre } \alpha, \beta > 1
+\end{align}
+
+Máme dané:
+
+\begin{align}
+E(\pi) &= 0.25 \\
+\text{Mode}(\pi) &= \frac{5}{22} \approx 0.2273
+\end{align}
+
+**Riešenie sústavy rovníc:**
+
+Z prvej rovnice:
+\begin{equation}
+\frac{\alpha}{\alpha + \beta} = 0.25 \implies \alpha = 0.25(\alpha + \beta) \implies \alpha = 0.25\alpha + 0.25\beta \implies 0.75\alpha = 0.25\beta \implies \beta = 3\alpha
+\end{equation}
+
+Z druhej rovnice:
+\begin{equation}
+\frac{\alpha - 1}{\alpha + \beta - 2} = \frac{5}{22}
+\end{equation}
+
+Dosadíme $\beta = 3\alpha$:
+\begin{align}
+\frac{\alpha - 1}{\alpha + 3\alpha - 2} &= \frac{5}{22} \\
+\frac{\alpha - 1}{4\alpha - 2} &= \frac{5}{22} \\
+22(\alpha - 1) &= 5(4\alpha - 2) \\
+22\alpha - 22 &= 20\alpha - 10 \\
+2\alpha &= 12 \\
+\alpha &= 6
+\end{align}
+
+A teda:
+\begin{equation}
+\beta = 3\alpha = 3 \times 6 = 18
+\end{equation}
+
+**Apriórny model:**
+\begin{equation}
+\pi \sim \text{Beta}(6, 18)
+\end{equation}
+
+```{r prior-calculation}
+# Výpočet parametrov prioru
+alpha_prior <- 6
+beta_prior <- 18
+
+# Overenie výpočtov
+mean_prior <- alpha_prior / (alpha_prior + beta_prior)
+mode_prior <- (alpha_prior - 1) / (alpha_prior + beta_prior - 2)
+var_prior <- (alpha_prior * beta_prior) / ((alpha_prior + beta_prior)^2 * (alpha_prior + beta_prior + 1))
+sd_prior <- sqrt(var_prior)
+
+cat("Apriórny model: Beta(", alpha_prior, ", ", beta_prior, ")\n", sep = "")
+cat("Stredná hodnota:", round(mean_prior, 4), "(požadované: 0.25)\n")
+cat("Modus:", round(mode_prior, 4), "(požadované:", round(5/22, 4), ")\n")
+cat("Smerodajná odchýlka:", round(sd_prior, 4), "\n")
+```
+
+**Overenie:**
+\begin{align}
+E(\pi) &= \frac{6}{6 + 18} = \frac{6}{24} = 0.25 \quad ✓ \\
+\text{Mode}(\pi) &= \frac{6 - 1}{6 + 18 - 2} = \frac{5}{22} \approx 0.2273 \quad ✓
+\end{align}
+
+#### Graf apriórneho modelu
+
+```{r prior-plot, fig.width=7, fig.height=4.5}
+plot_beta(alpha = alpha_prior, beta = beta_prior, mean = TRUE, mode = TRUE) +
+  labs(
+    title = "Apriórny Beta model pre proporciu cyklistov",
+    subtitle = paste0("Beta(", alpha_prior, ", ", beta_prior, ") - Mean = ", 
+                     round(mean_prior, 3), ", Mode = ", round(mode_prior, 3))
+  )
+```
+
+**Charakteristiky apriórneho modelu:**
+
+```{r prior-summary}
+summarize_beta(alpha = alpha_prior, beta = beta_prior)
+```
+
+### b. Posteriórny model pre $\pi$
+
+#### Beta-Binomial model
+
+Pre Beta-Binomial model platí:
+
+**Prior:**
+\begin{equation}
+\pi \sim \text{Beta}(\alpha, \beta)
+\end{equation}
+
+**Dáta:**
+\begin{equation}
+Y | \pi \sim \text{Binomial}(n, \pi)
+\end{equation}
+
+**Posterior:**
+\begin{equation}
+\pi | Y = y \sim \text{Beta}(\alpha + y, \beta + n - y)
+\end{equation}
+
+#### Výpočet posterioru
+
+Máme:
+- Prior: Beta(6, 18)
+- Dáta: $y = 15$ úspechov z $n = 50$ pokusov
+
+Posterior:
+\begin{align}
+\alpha_{post} &= \alpha + y = 6 + 15 = 21 \\
+\beta_{post} &= \beta + n - y = 18 + 50 - 15 = 53
+\end{align}
+
+**Posteriórny model:**
+\begin{equation}
+\boxed{\pi | y \sim \text{Beta}(21, 53)}
+\end{equation}
+
+```{r posterior-calculation}
+# Dáta
+n <- 50
+y <- 15
+
+# Posteriórne parametre
+alpha_post <- alpha_prior + y
+beta_post <- beta_prior + n - y
+
+cat("Posteriórny model: Beta(", alpha_post, ", ", beta_post, ")\n", sep = "")
+```
+
+### c. Charakteristiky posteriórneho modelu
+
+```{r posterior-characteristics}
+# Výpočet charakteristík posterioru
+mean_post <- alpha_post / (alpha_post + beta_post)
+mode_post <- (alpha_post - 1) / (alpha_post + beta_post - 2)
+var_post <- (alpha_post * beta_post) / ((alpha_post + beta_post)^2 * (alpha_post + beta_post + 1))
+sd_post <- sqrt(var_post)
+
+cat("=== Posteriórny model Beta(", alpha_post, ", ", beta_post, ") ===\n", sep = "")
+cat("Stredná hodnota (mean):", round(mean_post, 4), "\n")
+cat("Modus (mode):", round(mode_post, 4), "\n")
+cat("Rozptyl (variance):", round(var_post, 4), "\n")
+cat("Smerodajná odchýlka (SD):", round(sd_post, 4), "\n")
+```
+
+**Výpočet pomocou vzorcov:**
+
+\begin{align}
+E(\pi | y) &= \frac{21}{21 + 53} = \frac{21}{74} \approx 0.2838 \\
+\text{Mode}(\pi | y) &= \frac{21 - 1}{21 + 53 - 2} = \frac{20}{72} \approx 0.2778 \\
+\text{Var}(\pi | y) &= \frac{21 \times 53}{74^2 \times 75} \approx 0.0027 \\
+\text{SD}(\pi | y) &= \sqrt{0.0027} \approx 0.0518
+\end{align}
+
+#### Použitie funkcie z bayesrules
+
+```{r posterior-summary}
+summarize_beta(alpha = alpha_post, beta = beta_post)
+```
+
+### d. Porovnanie prioru, dát a posterioru
+
+#### Porovnávacia tabuľka
+
+```{r comparison-table}
+# Proporcia z dát
+data_proportion <- y / n
+
+comparison <- data.frame(
+  Model = c("Prior", "Dáta", "Posterior"),
+  Proporcia = c(mean_prior, data_proportion, mean_post),
+  SD = c(sd_prior, NA, sd_post),
+  Parametre = c(
+    paste0("Beta(", alpha_prior, ", ", beta_prior, ")"),
+    paste0(y, " z ", n),
+    paste0("Beta(", alpha_post, ", ", beta_post, ")")
+  )
+)
+
+comparison <- comparison %>%
+  mutate(Proporcia = round(Proporcia, 4),
+         SD = round(SD, 4))
+
+knitr::kable(comparison, caption = "Porovnanie prioru, dát a posterioru")
+```
+
+#### Vizualizácia prioru, likelihood a posterioru
+
+```{r comparison-plot, fig.width=8, fig.height=5}
+plot_beta_binomial(alpha = alpha_prior, beta = beta_prior, y = y, n = n) +
+  labs(title = "Beta-Binomial model pre proporciu cyklistov")
+```
+
+#### Analýza: Čo dominuje v posteriore - prior alebo dáta?
+
+**1. Porovnanie proporcií:**
+
+```{r proportion-comparison}
+cat("Prior mean:     ", round(mean_prior, 4), " (25.0%)\n")
+cat("Dáta proportion:", round(data_proportion, 4), " (", round(data_proportion*100, 1), "%)\n", sep = "")
+cat("Posterior mean: ", round(mean_post, 4), " (", round(mean_post*100, 1), "%)\n\n", sep = "")
+
+cat("Vzdialenosť posterioru od prioru:     ", round(abs(mean_post - mean_prior), 4), "\n")
+cat("Vzdialenosť posterioru od dátovej prop.:", round(abs(mean_post - data_proportion), 4), "\n")
+```
+
+**2. Váhy prioru a dát:**
+
+Posteriórnu strednú hodnotu môžeme vyjadriť ako váženú priemer prioru a dát:
+
+\begin{equation}
+E(\pi|y) = \frac{\alpha + y}{\alpha + \beta + n} = \frac{\alpha}{\alpha + \beta + n} + \frac{y}{\alpha + \beta + n} \cdot \frac{\alpha + \beta + n}{\alpha + \beta} + \frac{y}{n} \cdot \frac{n}{\alpha + \beta + n}
+\end{equation}
+
+Zjednodušene:
+\begin{equation}
+E(\pi|y) \approx w_{prior} \cdot E(\pi) + w_{data} \cdot \frac{y}{n}
+\end{equation}
+
+kde váhy sú určené "silou" prioru ($\alpha + \beta$) a počtom dát ($n$).
+
+```{r weights}
+# Sila prioru a dát
+prior_strength <- alpha_prior + beta_prior  # 24
+data_strength <- n                          # 50
+
+# Váhy
+weight_prior <- prior_strength / (prior_strength + data_strength)
+weight_data <- data_strength / (prior_strength + data_strength)
+
+cat("Sila prioru (α + β):", prior_strength, "\n")
+cat("Sila dát (n):       ", data_strength, "\n\n")
+
+cat("Váha prioru:        ", round(weight_prior, 4), " (", round(weight_prior*100, 1), "%)\n", sep = "")
+cat("Váha dát:           ", round(weight_data, 4), " (", round(weight_data*100, 1), "%)\n\n", sep = "")
+
+# Overenie
+weighted_mean <- weight_prior * mean_prior + weight_data * data_proportion
+cat("Vážený priemer:     ", round(weighted_mean, 4), "\n")
+cat("Skutočný posterior: ", round(mean_post, 4), "\n")
+```
+
+**3. Zmena neistoty:**
+
+```{r uncertainty-change}
+cat("Smerodajná odchýlka prioru:    ", round(sd_prior, 4), "\n")
+cat("Smerodajná odchýlka posterioru:", round(sd_post, 4), "\n")
+cat("Zníženie SD:                    ", round(sd_prior - sd_post, 4), 
+    " (", round((sd_prior - sd_post)/sd_prior * 100, 1), "%)\n", sep = "")
+```
+
+#### Záver k časti d)
+
+**Posterior je bližšie k dátam ako k prioru.**
+
+**Dôvody:**
+
+1. **Dáta majú väčšiu váhu:**
+   - Sila dát: $n = 50$
+   - Sila prioru: $\alpha + \beta = 24$
+   - Dáta majú približne dvojnásobnú váhu (~68% vs ~32%)
+
+2. **Porovnanie proporcií:**
+   - Prior mean: 0.25 (25%)
+   - Dáta: 15/50 = 0.30 (30%)
+   - Posterior mean: 0.284 (28.4%)
+   - Posterior je bližšie k 30% (dáta) ako k 25% (prior)
+
+3. **Vzdialenosti:**
+   - Vzdialenosť posterior od prioru: `r round(abs(mean_post - mean_prior), 4)`
+   - Vzdialenosť posterior od dát: `r round(abs(mean_post - data_proportion), 4)`
+   - Posterior je približne 2-krát bližšie k dátam
+
+4. **Neistota sa výrazne znížila:**
+   - SD prioru: `r round(sd_prior, 4)` → SD posterioru: `r round(sd_post, 4)`
+   - Zníženie o `r round((sd_prior - sd_post)/sd_prior * 100, 1)`%
+   - Máme oveľa väčšiu istotu po videní dát
+
+## Samostatný graf posterioru
+
+```{r posterior-plot, fig.width=7, fig.height=4.5}
+plot_beta(alpha = alpha_post, beta = beta_post, mean = TRUE, mode = TRUE) +
+  labs(
+    title = "Posteriórny Beta model pre proporciu cyklistov",
+    subtitle = paste0("Beta(", alpha_post, ", ", beta_post, ") - Mean = ", 
+                     round(mean_post, 3), ", Mode = ", round(mode_post, 3))
+  )
+```
+
+## Zhrnutie
+
+### Evolúcia modelu
+
+| Charakteristika | Prior Beta(6,18) | Dáta | Posterior Beta(21,53) |
+|----------------|------------------|------|-----------------------|
+| Stredná hodnota | 0.25 (25%) | 0.30 (30%) | 0.284 (28.4%) |
+| Modus | 0.227 (22.7%) | - | 0.278 (27.8%) |
+| Smer. odchýlka | 0.086 | - | 0.052 |
+| Sila | 24 | 50 | 74 |
+
+### Kľúčové zistenia
+
+1. **Prior:** Personál univerzity si myslel, že približne 25% študentov pravidelne jazdí na bicykli
+
+2. **Dáta:** V prieskume 50 študentov bolo 15 cyklistov (30%)
+
+3. **Posterior:** Po aktualizácii priorom dátami máme posterior s mean 28.4%
+   - Je to kompromis medzi priorom (25%) a dátami (30%)
+   - Bližšie k dátam, pretože dáta mali väčšiu váhu
+
+4. **Neistota:** SD klesla z 8.6% na 5.2% - máme väčšiu istotu
+
+5. **Praktický záver:** Univerzita by mala plánovať stojany pre približne **28% študentov**, s rozumnou neistotou ±10% (dva štandardné odchýlky)
+
+## Poznámky k Beta-Binomial modelu
+
+### Interpretácia parametrov
+
+**Prior Beta(6, 18):**
+
+- Ako keby sme mali "predchádzajúce skúsenosti" s 5 cyklistami a 17 necyklistami
+- Celková "sila" prioru: 24 pozorovaní
+
+**Posterior Beta(21, 53):**
+
+- Kombinuje prior s novými dátami
+- 21 = 6 (prior) + 15 (noví cyklisti)
+- 53 = 18 (prior) + 35 (noví necyklisti)
+- Celková "sila": 74 pozorovaní
+
+### Bayesovská aktualizácia
+
+\begin{equation}
+\text{Posterior} = \frac{\text{Prior} \times \text{Likelihood}}{\text{Normalizačná konstanta}}
+\end{equation}
+
+V našom prípade:
+\begin{equation}
+\text{Beta}(21, 53) = \text{Beta}(6, 18) \times \text{Binomial}(15 | 50, \pi)
+\end{equation}
+
+Posterior je **kompromis** medzi našim počiatočným presvedčením (prior) a pozorovanými dátami!

@@ -1,0 +1,209 @@
+---
+title: "Exercise 2.4 - Vampires?"
+subtitle: "Aplikácia Bayesovho pravidla"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+## Úvod
+
+Riešenie cvičenia 2.4 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-2#exercises-1) 
+
+Aplikácia Bayesovho pravidla na výpočet podmienenej pravdepodobnosti existencie upírov na základe pozorovania (Edward žiaril ako diamant).
+
+## Exercise 2.4: Vampires?
+
+> Edward is trying to prove to Bella that vampires exist. Bella thinks there is a 0.05 probability that vampires exist. She also believes that the probability that someone can sparkle like a diamond if vampires exist is 0.7, and the probability that someone can sparkle like a diamond if vampires do not exist is 0.03.
+>
+> **Question:** Given that Edward sparkled like a diamond, what is the probability that vampires exist?
+
+## Solution
+
+### Definícia udalostí
+
+Označme si:
+
+- $V$ = udalosť "upíri existujú"
+- $V^c$ = udalosť "upíri neexistujú" (komplement)
+- $S$ = udalosť "Edward žiaril ako diamant" (sparkle)
+
+### Dané informácie
+
+**Pravdepodobnosť existencie upírov:**
+
+Bella si myslí, že pravdepodobnosť existencie upírov je:
+
+\begin{equation}
+P(V) = 0.05
+\end{equation}
+
+A teda pravdepodobnosť, že upíri neexistujú je:
+
+\begin{equation}
+P(V^c) = 1 - P(V) = 1 - 0.05 = 0.95
+\end{equation}
+
+**Podmienené pravdepodobnosti:**
+
+Pravdepodobnosť, že niekto žiari ako diamant, **ak upíri existujú**:
+
+\begin{equation}
+P(S|V) = 0.7
+\end{equation}
+
+Pravdepodobnosť, že niekto žiari ako diamant, **ak upíri neexistujú**:
+
+\begin{equation}
+P(S|V^c) = 0.03
+\end{equation}
+
+### Hľadáme
+
+**Podmienenú pravdepodobnosť:**
+
+Aká je pravdepodobnosť, že upíri existujú, **keď sme pozorovali, že Edward žiaril**?
+
+\begin{equation}
+P(V|S) = \; ?
+\end{equation}
+
+## Riešenie pomocou Bayesovho pravidla
+
+### Bayesovo pravidlo (Bayes' Rule)
+
+Bayesovo pravidlo nám umožňuje vypočítať podmienenú pravdepodobnosť:
+
+\begin{equation}
+P(V|S) = \frac{P(V) \cdot P(S|V)}{P(S)}
+\end{equation}
+
+kde:
+
+- $P(V|S)$ = pravdepodobnosť, že upíri existujú, keď Edward žiaril
+- $P(V)$ = pravdepodobnosť existencie upírov (pred pozorovaním)
+- $P(S|V)$ = pravdepodobnosť žiarenia, ak upíri existujú
+- $P(S)$ = celková pravdepodobnosť pozorovania žiarenia
+
+### Krok 1: Výpočet normalizačnej konštanty $P(S)$
+
+Normalizačnú konštantu vypočítame pomocou **zákona úplnej pravdepodobnosti**:
+
+\begin{equation}
+P(S) = P(S|V) \cdot P(V) + P(S|V^c) \cdot P(V^c)
+\end{equation}
+
+Dosadíme hodnoty:
+
+\begin{align}
+P(S) &= P(S|V) \cdot P(V) + P(S|V^c) \cdot P(V^c) \\
+&= 0.7 \times 0.05 + 0.03 \times 0.95 \\
+&= 0.035 + 0.0285 \\
+&= 0.0635
+\end{align}
+
+**Interpretácia:** Celková pravdepodobnosť, že niekto žiari ako diamant (bez ohľadu na to, či upíri existujú alebo nie), je 6.35%.
+
+### Krok 2: Výpočet podmienenej pravdepodobnosti $P(V|S)$
+
+Teraz máme všetky potrebné časti pre Bayesovo pravidlo:
+
+\begin{align}
+P(V|S) &= \frac{P(V) \cdot P(S|V)}{P(S)} \\
+&= \frac{0.05 \times 0.7}{0.0635} \\
+&= \frac{0.035}{0.0635} \\
+&= \frac{35}{63.5} \\
+&= \frac{70}{127} \\
+&\approx 0.5512
+\end{align}
+
+## Výsledok
+
+\begin{equation}
+\boxed{P(V|S) \approx 0.55 \text{ alebo } 55\%}
+\end{equation}
+
+**Odpoveď:** Keď Edward zažiaril ako diamant, pravdepodobnosť, že upíri existujú, je približne **55%** (alebo presne $\frac{70}{127}$).
+
+## Interpretácia výsledku
+
+### Zmena pravdepodobnosti
+
+- **Pôvodná pravdepodobnosť:** Bella pôvodne verila, že upíri existujú len s pravdepodobnosťou 5%
+- **Aktualizovaná pravdepodobnosť:** Po tom, čo videla Edwarda žiariť, stúpla jej pravdepodobnosť na 55%
+
+### Prečo sa pravdepodobnosť zvýšila?
+
+1. **Žiarenie je oveľa pravdepodobnejšie, ak upíri existujú:**
+   - $P(S|V) = 0.7$ (70% šanca žiariť, ak upíri existujú)
+   - $P(S|V^c) = 0.03$ (len 3% šanca žiariť, ak upíri neexistujú)
+
+2. **Žiarenie je silný dôkaz:** Keďže Edward žiaril, a žiarenie je 23-krát pravdepodobnejšie pri existencii upírov ($0.7/0.03 \approx 23.3$), dramaticky sa zvýšila pravdepodobnosť existencie upírov.
+
+3. **Stále nie je istota:** Napriek silnému dôkazu je výsledná pravdepodobnosť len 55%, nie 100%, pretože:
+   - Pôvodná pravdepodobnosť (5%) bola veľmi nízka
+   - Existuje malá šanca (3%), že niekto žiari aj bez existencie upírov
+
+## Vizualizácia pomocou tabuľky pravdepodobností
+
+### Tabuľka všetkých možností
+
+|                    | **Upíri existujú ($V$)** | **Upíri neexistujú ($V^c$)** | **Spolu** |
+|-------------------|--------------------------|------------------------------|-----------|
+| **Pravdepodobnosť** $P(\cdot)$        | 0.05                     | 0.95                         | 1.00      |
+| **Podmienená prav.** $P(S\|\cdot)$ | 0.70                     | 0.03                         | -         |
+| **Spoločná prav.** $P(\cdot \cap S)$ | 0.035                    | 0.0285                       | 0.0635    |
+| **Výsledná prav.** $P(\cdot\|S)$  | **0.5512**               | 0.4488                       | 1.00      |
+
+### Výpočet spoločnej pravdepodobnosti (Joint)
+
+\begin{align}
+P(V \cap S) &= P(V) \cdot P(S|V) = 0.05 \times 0.70 = 0.035 \\
+P(V^c \cap S) &= P(V^c) \cdot P(S|V^c) = 0.95 \times 0.03 = 0.0285
+\end{align}
+
+### Výpočet výslednej pravdepodobnosti
+
+\begin{align}
+P(V|S) &= \frac{P(V \cap S)}{P(S)} = \frac{0.035}{0.0635} \approx 0.5512 \\
+P(V^c|S) &= \frac{P(V^c \cap S)}{P(S)} = \frac{0.0285}{0.0635} \approx 0.4488
+\end{align}
+
+**Kontrola:** $P(V|S) + P(V^c|S) = 0.5512 + 0.4488 = 1.00$ ✓
+
+## Všeobecný tvar Bayesovho pravidla
+
+Pre dve komplementárne udalosti $H$ a $H^c$ a pozorovanie $D$:
+
+\begin{equation}
+P(H|D) = \frac{P(H) \cdot P(D|H)}{P(H) \cdot P(D|H) + P(H^c) \cdot P(D|H^c)}
+\end{equation}
+
+Alebo slovne:
+
+\begin{equation}
+\text{P(hypotéza | dáta)} = \frac{\text{P(hypotéza)} \times \text{P(dáta | hypotéza)}}{\text{P(dáta)}}
+\end{equation}
+
+## Zhrnutie krokov riešenia
+
+1. **Identifikovať udalosti** a zapísať dané pravdepodobnosti
+2. **Vypočítať $P(S)$** pomocou zákona úplnej pravdepodobnosti
+3. **Aplikovať Bayesovo pravidlo** na výpočet $P(V|S)$
+4. **Interpretovať výsledok** v kontexte úlohy
+
+## Záver
+
+Bayesovo pravidlo nám umožňuje **aktualizovať naše presvedčenie** na základe **nových dôkazov**.
+
+V tomto prípade:
+- Bella začínala s veľmi nízkou pravdepodobnosťou existencie upírov (5%)
+- Po pozorovaní silného dôkazu (Edward žiaril) sa pravdepodobnosť zvýšila na 55%
+- Stále však nie je absolútna istota, pretože existuje malá šanca žiarenia aj bez upírov
+
+**Kľúčová myšlienka:** Bayesovo pravidlo nám ukazuje, ako racionálne aktualizovať naše presvedčenie na základe nových informácií!

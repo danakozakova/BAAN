@@ -1,0 +1,1547 @@
+---
+title: "Předmět: MPE _BAAN Bayesiánska analýza"
+subtitle: "První úkol"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(dplyr)
+library(bayesrules)
+library(fivethirtyeight)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+```
+
+# Exercise 2.4: Vampires?
+Riešenie cvičenia 2.4 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-2#exercises-1) 
+
+> Edward is trying to prove to Bella that vampires exist. Bella thinks there is a 0.05 probability that vampires exist. She also believes that the probability that someone can sparkle like a diamond if vampires exist is 0.7, and the probability that someone can sparkle like a diamond if vampires do not exist is 0.03.
+>
+> **Question:** Given that Edward sparkled like a diamond, what is the probability that vampires exist?
+
+## Solution
+
+### Definícia udalostí
+
+- $V$ = udalosť "upíri existujú"
+- $V^c$ = udalosť "upíri neexistujú" (komplement)
+- $S$ = udalosť "žiariť ako diamant" (sparkle)
+
+Pravdepodobnosť existencie upírov:
+\begin{equation}
+P(V) = 0.05
+\end{equation}
+
+Pravdepodobnosť, že niekto žiari ako diamant, ak upíri existujú:
+\begin{equation}
+P(S|V) = 0.7
+\end{equation}
+
+Pravdepodobnosť, že niekto žiari ako diamant, ak upíri neexistujú:
+\begin{equation}
+P(S|V^c) = 0.03
+\end{equation}
+
+### Hľadáme
+P(ak Edward žiari, aká je pravdepodobnosť, že upíri existujú?) 
+\begin{equation}
+P(V|S) = \; ?
+\end{equation}
+
+### Z Bayesovo vzorca
+\begin{equation}
+P(V|S) = \frac{P(V) \cdot P(S|V)}{P(S)}
+\end{equation}
+
+Nepoznáme P(S) = pravdepodobnosť, že niekto žiari
+→ vypočítame cez vzťah úplnej pravdepodobnosti:
+\begin{align}
+P(S) &= P(S|V) \cdot P(V) + P(S|V^c) \cdot P(V^c) \\
+&= 0.7 \times 0.05 + 0.03 \times 0.95 \\
+&= 0.035 + 0.0285 \\
+&= 0.0635
+\end{align}
+
+Celková pravdepodobnosť, že niekto žiari ako diamant je **6,35%**.
+Môžeme dosadiť do Bayesovho vzorca:
+\begin{align}
+P(V|S) &= \frac{P(V) \cdot P(S|V)}{P(S)} = \frac{0.05 \times 0.7}{0.0635} = \frac{0.7}{12.7} \\
+&= \frac{70}{127} \approx 0.5512
+\end{align}
+
+**Odpoveď:** Keď Edward zažiaril ako diamant, pravdepodobnosť, že upíri existujú, je približne **55%** (alebo presne $\frac{70}{127}$).
+
+## Interpretácia výsledku
+
+Bella pôvodne verila len s pravdepodobnosťou $3%$. Po tom, čo videla žiariť Edwarda, jej pravdepodobnosť vzrástla na $55%$. Lebo žiarenie je oveľa pravdepodobnejšie pri existencii upírov než pri ich neexistencii (0,7 voči 0,03).
+
+# Exercise 2.11: Muhammad's Internship Applications
+Riešenie cvičenia 2.11 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-2#exercises-1)
+
+> Muhammad applies for six equally competitive data science internships. He has the following prior model for his chances of getting into any given internship, $\pi$:
+
+```{r table, echo=FALSE}
+prior_table <- data.frame(
+  `0.3` = 0.25,
+  `0.4` = 0.60,
+  `0.5` = 0.15,
+  Total = 1,
+  check.names = FALSE
+)
+rownames(prior_table) <- "f(π)"
+
+kable(prior_table, align = 'c') %>%
+  kable_styling(full_width = FALSE, position = "left") %>%
+  add_header_above(c(" " = 1, "π" = 4))
+```
+
+> a. Let $Y$  be the number of internship offers that Muhammad gets. Specify the model for the dependence of $Y$ on $\pi$ and the corresponding pmf, $f(y|\pi)$
+> b. Muhammad got some pretty amazing news. He was offered four of the six internships! How likely would this be if $\pi = 0.3$?
+> c. Construct the posterior model of $\pi$ in light of Muhammad’s internship news.
+
+## Solution
+
+### a. Model závislosti $Y$ na $\pi$ 
+
+Muhammad sa uchádzal o $n = 6$ stáží. Predpokladáme, že:
+
+- Každá stáž má rovnakú pravdepodobnosť prijatia $\pi$
+- Prijatia sú navzájom nezávislé
+
+Preto počet prijatých stáží $Y$ má **binomické rozdelenie**:
+
+> \begin{equation}
+> Y | \pi \sim \text{Bi}(n = 6, p = \pi)
+> \end{equation}
+
+
+Pravdepodobnostná funkcia (pmf) pre binomické rozdelenie je:
+
+> \begin{equation}
+> f(y|\pi) = \binom{6}{y} \pi^y (1-\pi)^{6-y} \quad \text{pre } y \in \{0, 1, 2, 3, 4, 5, 6\}
+> \end{equation}
+> kde $\binom{6}{y} = \frac{6!}{y!(6-y)!}$ je binomický koeficient, ktorý nezávisí od hyperparametra, len od dát.
+
+### b. Likelihood funkcia
+
+Muhammad dostal **4 ponuky z 6** stáží, teda $y = 4$.
+Vierohodnostná funkcia má rovnaký tvar ako pmf, len iné chápanie parametra:
+
+> \begin{equation}
+> L(\pi|y = 4) = f(y = 4|\pi) = \binom{6}{4} \pi^4 (1-\pi)^{6-4}
+> \end{equation}
+
+Pre $\pi = 0.3$ vypočítame likelihood:
+
+> \begin{split}
+> L(\pi = 0.3 | y = 4) & = f(y = 4 | \pi = 0.3) \\
+> & = \binom{6}{4} 0.3^4 (1-0.3)^{6-4} = \\
+> & = \frac{6\cdot 5}{2} \cdot 0.3^4 \cdot 0.7^{2} \\
+> & = 15 \cdot 0.0081 \cdot 0.49 \\
+> & = 0.0059535
+> \end{split}
+
+```{r likelihood-calculation}
+# Výpočet vierohodnosti pre π = 0.3
+n <- 6
+y <- 4
+pi_03 <- 0.3
+
+likelihood_03 <- dbinom(y, size = n, prob = pi_03)
+cat('Vierohodnosť pre hodnotu pi 0.3 je: ', likelihood_03)
+```
+
+**Interpretácia:** Ak by pravdepodobnosť prijatia bola len $\pi = 0.3$, potom by bolo dosť nepravdepodobné (približne 6%), že Muhammad dostane 4 z 6 ponúk.
+
+### c. Posteriórny model
+
+#### 1. Apriórny model
+
+Náš prior model pre $\pi$ je:
+
+```{r prior-table}
+# Apriórny model
+prior_data <- data.frame(
+  pi = c(0.3, 0.4, 0.5),
+  f_pi = c(0.25, 0.60, 0.15)
+)
+
+kable(prior_data, 
+      col.names = c("π", "f(π)"),
+      caption = "Apriórny model",
+      align = 'c') %>%
+  kable_styling(full_width = FALSE)
+```
+
+#### 2. Výpočet Likelihood funkcie
+
+Pre pozorovanie $y = 4$ vypočítame likelihood pre každé možné $\pi$:
+
+$$L(\pi | y = 4) = f(y = 4 | \pi) = \binom{6}{4} \pi^4 (1-\pi)^2 = 15 \pi^4 (1-\pi)^2$$
+
+```{r likelihood-table}
+# Výpočet likelihood pre všetky π
+likelihood_data <- prior_data %>%
+  mutate(
+    L_pi = dbinom(y, size = n, prob = pi)
+  )
+
+kable(likelihood_data, 
+      col.names = c("π", "f(π)", "L(π/y=4)"),
+      caption = "Apriórny model a Likelihood funkcia",
+      align = 'c',
+      digits = 6) %>%
+  kable_styling(full_width = FALSE)
+```
+
+**Interpretácia likelihood:** Dáta (y=4) sú **najviac kompatibilné** s $\pi = 0.5$ (tu je najvyššia vierohodnosť) a **najmenej kompatibilné** s $\pi = 0.3$. Vidno to aj na grafoch - viď výška stĺpca pre hodnotu 4:
+
+
+```{r binomial-viz, fig.width=8, fig.height=4, echo=FALSE}
+# Vizualizácia binomického modelu pre rôzne π
+pi_values <- c(0.3, 0.4, 0.5)
+y_values <- 0:6
+
+# Vytvorenie dát pre graf
+plot_data <- expand.grid(y = y_values, pi = pi_values)
+plot_data$probability <- dbinom(plot_data$y, size = 6, prob = plot_data$pi)
+plot_data$pi_label <- paste("π =", plot_data$pi)
+
+# Graf
+ggplot(plot_data, aes(x = y, y = probability)) +
+  geom_col(fill = "steelblue", alpha = 0.7) +
+  facet_wrap(~pi_label) +
+  labs(title = "Binomické rozdelenie Y | π ~ Bin(6, π) pre 3 rôzne hodnoty π z prior modelu",
+       x = "Počet prijatí (y)", 
+       y = "f(y|π)") +
+  theme_minimal() +
+  scale_x_continuous(breaks = 0:6)
+```
+
+
+#### 3. Posteriórny model
+
+Bayesovo pravidlo hovorí:
+
+$$f(\pi | y) = \frac{f(\pi) \cdot L(\pi|y)}{f(y)} \propto f(\pi) \cdot L(\pi|y)$$
+
+**Krok 1:** Súčin prior × likelihood (nenormalizovaný posterior)
+
+```{r unnormalized-posterior}
+# Nenormalizovaný posterior
+posterior_data <- likelihood_data %>%
+  mutate(
+    prior_times_likelihood = f_pi * L_pi
+  )
+
+kable(posterior_data, 
+      col.names = c("π", "f(π)", "L(π/y=4)", "f(π) × L(π/y=4)"),
+      caption = "Výpočet nenormalizovaného posterioru",
+      align = 'c',
+      digits = 6) %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+**Krok 2:** Normalizačná konštanta, aby súčet bol 1
+$$f(\pi | y = 4) = \frac{f(\pi) \cdot L(\pi|y=4)}{\sum_{\text{všetky } \pi} f(\pi) \cdot L(\pi|y=4)}$$
+
+```{r normalization-constant}
+# Suma pre normalizáciu
+sum_prior_likelihood <- sum(posterior_data$prior_times_likelihood)
+cat(sprintf("\nNormalizačná konštanta f(y=4) = %.6f\n", sum_prior_likelihood))
+```
+
+**Krok 3:** Normalizovaný posterior
+
+```{r posterior-table}
+# Normalizovaný posterior
+posterior_data <- posterior_data %>%
+  mutate(
+    f_pi_given_y = prior_times_likelihood / sum_prior_likelihood
+  )
+
+# Finálna tabuľka
+final_table <- posterior_data %>%
+  select(pi, f_pi, L_pi, f_pi_given_y)
+
+kable(final_table, 
+      col.names = c("π", "Prior f(π)", "Likelihood L(π/y=4)", "Posterior f(π/y=4)"),
+      caption = "Porovnanie: Prior → Likelihood → Posterior",
+      align = 'c',
+      digits = 6) %>%
+  kable_styling(full_width = FALSE) 
+```
+
+Tu vidíme, že na základe výsledku sa zvýšila pravdepodobnosť pre $\pi$ 0.4 aj 0.5 a naopak poklesla pravdepodobnosť hodnoty 0.3. Dôvodom je, že jeho úspešnosť bola 4/6 = približne 0,66.
+
+# Exercise 3.9: Interpreting Priors
+
+Riešenie cvičenia 3.9 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-3#exercises-2) 
+
+> What do you call a sweet carbonated drink: pop, soda, coke, or something else? Let $\pi$ be the proportion of U.S. residents that prefer the term "pop." Two different beverage salespeople from different regions of the country have different priors for $\pi$. The first salesperson works in North Dakota and specifies a Beta(8,2) prior. The second works in Louisiana and specifies a Beta(1,20) prior.
+>
+> a. Calculate the prior mean, mode, standard deviation of $\pi$ for both salespeople.
+>
+> b. Plot the prior pdfs for both salespeople.
+>
+> c. Compare, in words, the salespeople's prior understandings about the proportion of U.S. residents that say "pop."
+
+## Solution
+
+### a. Charakteristiky apriórnych modelov
+**Parameter:** $\pi$ = podiel obyvateľov USA, ktorí používajú výraz "pop" pre sladené nápoje
+**Dvaja predajcovia z rôznych regiónov:**
+
+1. **Predajca z North Dakota (ND):** má apriórny model $\pi \sim \text{Beta}(8, 2)$
+2. **Predajca z Louisiana (LA):** má apriórny model $\pi \sim \text{Beta}(1, 20)$
+
+#### Vzorce pre Beta rozdelenie
+> Pre $\pi \sim \text{Beta}(\alpha, \beta)$ platí:
+> \begin{align}
+> E(\pi) &= \frac{\alpha}{\alpha + \beta} \\
+> Mode(\pi) &= \frac{\alpha - 1}{\alpha + \beta - 2} \quad \text{pre } \alpha, \beta > 1 \\
+> Var(\pi) &= \frac{\alpha \beta}{(\alpha + \beta)^2(\alpha + \beta + 1)} \\
+> SD(\pi) &= \sqrt{\text{Var}(\pi)}
+> \end{align}
+
+#### Predajca z North Dakota: Beta(8, 2)
+> \begin{align}
+> E(\pi) &= \frac{8}{8 + 2} = \frac{8}{10} = 0.8 \\
+> Mode(\pi) &= \frac{8 - 1}{8 + 2 - 2} = \frac{7}{8} = 0.875 \\
+> Var(\pi) &= \frac{8 \times 2}{10^2 \times 11} = \frac{16}{1100} \approx 0.0145 \\
+> SD(\pi) &= \sqrt{0.0145} \approx 0.1205
+> \end{align}
+
+#### Predajca z Louisiana: Beta(1, 20)
+> \begin{align}
+> E(\pi) &= \frac{1}{1 + 20} = \frac{1}{21} \approx 0.0476 \\
+> Mode(\pi) &= \text{nedfinované, lebo } \alpha \text{ nie je > 1} \\
+> Var(\pi) &= \frac{1 \times 20}{21^2 \times 22} = \frac{20}{9702} \approx 0.0021 \\
+> SD(\pi) &= \sqrt{0.0021} \approx 0.0453
+> \end{align}
+
+#### Porovnanie charakteristík
+
+```{r comparison-table}
+alpha_nd <- 8
+beta_nd <- 2
+
+alpha_la <- 1
+beta_la <- 20
+
+summarize_beta(alpha = alpha_nd, beta = beta_nd)
+summarize_beta(alpha = alpha_la, beta = beta_la)
+
+```
+
+### b. Grafy apriórnych hustôt pravdepodobnosti (pdf)
+
+#### Graf pre North Dakota
+
+```{r nd-plot, fig.width=7, fig.height=4}
+plot_beta(alpha = alpha_nd, beta = beta_nd, mean = TRUE, mode = TRUE) +
+  labs(title = "North Dakota - Beta(8, 2)")
+```
+
+#### Graf pre Louisiana
+
+```{r la-plot, fig.width=7, fig.height=4}
+plot_beta(alpha = alpha_la, beta = beta_la, mean = TRUE, mode = FALSE) +
+  labs(title = "Louisiana - Beta(1, 20)")
+```
+
+### c. Porovnanie a interpretácia apriórnych modelov
+
+#### Stredná hodnota, modus
+
+**North Dakota - Beta(`r alpha_nd`, `r beta_nd`):**
+
+- Stredná hodnota: $E(\pi) = 0.80$ (80%)
+- Modus: $\text{Mode}(\pi) = 0.875$ (87.5%)
+- Predajca z North Dakota verí, že väčšina (približne 80%) obyvateľov USA používa výraz "pop"
+
+**Louisiana - Beta(`r alpha_la`, `r beta_la`):**
+
+- Stredná hodnota: $E(\pi) = 0.048$ (4.8%)
+- Distribúcia je klesajúca (maximum pri $\pi = 0$)
+- Predajca z Louisiana verí, že len veľmi malá časť (približne 5%) obyvateľov USA používa výraz "pop"
+
+Oba predajcovia majú **diametrálne odlišné** presvedčenia. North Dakota verí, že "pop" je veľmi populárne, zatiaľ čo Louisiana verí opak.
+
+#### Variabilita (neistota)
+
+**North Dakota - Beta(`r alpha_nd`, `r beta_nd`):**
+
+- Smerodajná odchýlka: $\text{SD}(\pi) = 0.121$ (12.1%)
+
+**Louisiana - Beta(`r alpha_la`, `r beta_la`):**
+
+- Smerodajná odchýlka: $\text{SD}(\pi) = 0.045$ (4.5%)
+
+Predajca z Louisiana je **istejší** vo svojom presvedčení (menšia SD) ako ten z NA, lebo SD pre neho je nižšia.
+
+#### Parametre $\alpha$ a $\beta$
+
+**North Dakota - Beta(`r alpha_nd`, `r beta_nd`):**
+
+- súčet je 10: akoby videl, 8 - 1 = 7 ľudí, ktorí hovoria "pop" vs. 2 - 1 = 1, ktorý to slovo nepoužíva
+
+**Louisiana - Beta(`r alpha_la`, `r beta_la`):**
+
+- súčet je 21: akoby nepoznal žiadneho (1 - 1 = 0), ktorý hovorí "pop" vs. 20 - 1 = 19, ktorí to slovo nepoužívajú
+- súčet je vyšší, teda si je viac istejší
+
+# Exercise 3.11: Regular Bike Ridership
+
+Riešenie cvičenia 3.11 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-3#exercises-2) 
+
+> A university wants to know what proportion of students are regular bike riders, $\pi$, so that they can install an appropriate number of bike racks. Since the university is in sunny Southern California, staff think that $\pi$ has a mean of 1 in 4 students, and a mode of 5/22.
+>
+> a. Specify and plot a Beta model that reflects the staff's prior ideas about $\pi$.
+> b. Among 50 surveyed students, 15 are regular bike riders. What is the posterior model for $\pi$?
+> c. What is the mean, mode, and standard deviation of the posterior model?
+> d. Does the posterior model more closely reflect the prior information or the data? Explain your reasoning.
+
+## Solution
+
+**Chceme zistiť:** $\pi$ = podiel študentov, ktorí sú pravidelnými cyklistami
+
+**Dané informácie o apriórnom modeli:**
+
+- Stredná hodnota: $E(\pi) = \frac{1}{4} = 0.25$
+- Modus: $\text{Mode}(\pi) = \frac{5}{22} \approx 0.2273$
+
+**Dáta z prieskumu:**
+
+- Počet opýtaných študentov: $n = 50$
+- Počet pravidelných cyklistov: $y = 15$
+- Podie je $15/50 = 0.3$ (trochu vyšší ako v priórnom modeli)
+
+
+### a. Špecifikácia a vykreslenie apriórneho Beta modelu
+
+#### Výpočet parametrov $\alpha$ a $\beta$ z prioru
+
+>Pre Beta($\alpha, \beta$) rozdelenie platí:
+> \begin{align}
+> E(\pi) &= \frac{\alpha}{\alpha + \beta} \\
+> \text{Mode}(\pi) &= \frac{\alpha - 1}{\alpha + \beta - 2} \quad \text{pre } \alpha, \beta > 1
+> \end{align}
+
+> Máme dané:
+> \begin{align}
+> E(\pi) &= 0.25 \\
+> \text{Mode}(\pi) &= \frac{5}{22} \approx 0.2273
+> \end{align}
+
+**Riešenie sústavy rovníc:**
+
+Z prvej rovnice:
+\begin{align}
+\frac{\alpha}{\alpha + \beta} & = 0.25 \\
+\alpha & = 0.25(\alpha + \beta) \\ 
+\alpha & = 0.25\alpha + 0.25\beta \\
+0.75\alpha & = 0.25\beta \\
+\beta & = 3\alpha
+\end{align}
+
+Z druhej rovnice:
+\begin{equation}
+\frac{\alpha - 1}{\alpha + \beta - 2} = \frac{5}{22}
+\end{equation}
+
+Dosadíme $\beta = 3\alpha$:
+\begin{align}
+\frac{\alpha - 1}{\alpha + 3\alpha - 2} &= \frac{5}{22} \\
+\frac{\alpha - 1}{4\alpha - 2} &= \frac{5}{22} \\
+22(\alpha - 1) &= 5(4\alpha - 2) \\
+22\alpha - 22 &= 20\alpha - 10 \\
+2\alpha &= 12 \\
+\alpha &= 6
+\end{align}
+
+A teda:
+\begin{equation}
+\beta = 3\alpha = 3 \cdot 6 = 18
+\end{equation}
+
+**Apriórny model:**
+\begin{equation}
+\pi \sim \text{Beta}(6, 18)
+\end{equation}
+
+```{r prior-calculation, echo = TRUE}
+# Výpočet parametrov prioru - pre kontrolu
+alpha_prior <- 6
+beta_prior <- 18
+mean_prior <- alpha_prior/ (alpha_prior + beta_prior)
+mode_prior <- (alpha_prior - 1)/(alpha_prior + beta_prior - 2)
+var_prior <- (alpha_prior * beta_prior) / ((alpha_prior + beta_prior)^2 * (alpha_prior + beta_prior + 1))
+sd_prior <- sqrt(var_prior)
+
+
+# Overenie výpočtov charakteristík
+summarize_beta(alpha_prior, beta_prior)
+```
+
+#### Graf apriórneho modelu
+
+```{r prior-plot, fig.width=7, fig.height=4.5}
+plot_beta(alpha = alpha_prior, beta = beta_prior, mean = TRUE, mode = TRUE) +
+  labs(
+    title = "Apriórny Beta model pre podiel cyklistov",
+    subtitle = paste0("Beta(", alpha_prior, ", ", beta_prior, ")")
+  )
+```
+
+### b. Posteriórny model pre $\pi$
+
+#### Beta-Binomial model
+
+Pre Beta-Binomial model platí:
+
+> **Prior:**
+> \begin{equation}
+> \pi \sim \text{Beta}(\alpha, \beta)
+> \end{equation}
+
+> **Dáta:**
+> \begin{equation}
+> Y | \pi \sim \text{Bi}(n = 50, \pi)
+> \end{equation}
+
+> **Posterior:**
+> \begin{equation}
+> \pi | Y = 15 \sim \text{Beta}(\alpha + y, \beta + n - y)
+> \end{equation}
+
+#### Výpočet posterioru
+
+Máme:
+- Prior: Beta(6, 18)
+- Dáta: $y = 15$ úspechov z $n = 50$ pokusov
+
+Posterior:
+\begin{align}
+\alpha_{post} &= \alpha + y = 6 + 15 = 21 \\
+\beta_{post} &= \beta + n - y = 18 + 50 - 15 = 53
+\end{align}
+
+> **Posteriórny model:**
+> \begin{equation}
+> \boxed{\pi | y \sim \text{Beta}(21, 53)}
+> \end{equation}
+
+```{r posterior-calculation}
+# Dáta
+n <- 50
+y <- 15
+
+# Posteriórne parametre
+alpha_post <- alpha_prior + y
+beta_post <- beta_prior + n - y
+
+cat("Posteriórny model: Beta(", alpha_post, ", ", beta_post, ")\n", sep = "")
+```
+
+### c. Charakteristiky posteriórneho modelu
+
+**Výpočet charakteristík posteriórneho modelu pomocou vzorcov:**
+
+\begin{align}
+E(\pi | y) &= \frac{21}{21 + 53} = \frac{21}{74} \approx 0.2838 \\
+\text{Mode}(\pi | y) &= \frac{21 - 1}{21 + 53 - 2} = \frac{20}{72} \approx 0.2778 \\
+\text{Var}(\pi | y) &= \frac{21 \times 53}{74^2 \times 75} \approx 0.0027 \\
+\text{SD}(\pi | y) &= \sqrt{0.0027} \approx 0.0518
+\end{align}
+
+#### Charakteristiky posteriórneho modelu a porovnanie s apriórnym
+```{r posterior-characteristics}
+summarize_beta(alpha_post, beta_post)
+summarize_beta_binomial(alpha = alpha_prior, beta = beta_prior, y = y, n = n)
+```
+
+
+### d. Porovnanie apriórneho a posterórneho modelu
+
+```{r comparison-plot, fig.width=8, fig.height=5}
+plot_beta_binomial(alpha = alpha_prior, beta = beta_prior, y = y, n = n) +
+  labs(title = "Beta-Binomial model pre podiel cyklistov")
+
+```
+**Váhy prioru a dát:**
+
+Posteriórnu strednú hodnotu môžeme vyjadriť ako váženú priemer prioru a dát:
+
+\begin{align}
+E(\pi|y) &= \frac{\alpha + y}{\alpha + \beta + n} = \\
+&= \frac{\alpha}{\alpha + \beta + n} + \frac{y}{\alpha + \beta + n} = \\
+&= \frac{\alpha + \beta}{\alpha + \beta + n} \cdot \frac{\alpha}{\alpha + \beta}  + \frac{n}{\alpha + \beta + n} \cdot \frac{y}{n} = \\
+&= w_{prior} \cdot E(\pi) + w_{data} \cdot \frac{y}{n}
+\end{align}
+
+Zjednodušene:
+\begin{equation}
+E(\pi|y) \approx w_{prior} \cdot E(\pi) + w_{data} \cdot \frac{y}{n}
+\end{equation}
+kde váhy sú určené "silou" apriórneho modelu ($\alpha + \beta$) a počtom dát ($n$).
+
+Sila prioru: 
+\begin{equation}
+\alpha + \beta = 6 + 18 = 24
+\end{equation}
+
+Sila dát: 
+\begin{equation}
+n = 50
+\end{equation}
+
+Váha prioru: 
+\begin{equation}
+w_{prior} =\frac{\alpha + \beta}{\alpha + \beta + n} = \frac{6 + 18}{6 + 18 + 50} = \frac{24}{74} = 0.3243
+\end{equation}
+
+Váha dát: 
+\begin{equation}
+w_{data} =\frac{n}{\alpha + \beta + n} = \frac{50}{6 + 18 + 50} = \frac{50}{74} = 0.6757
+\end{equation}
+
+Vážený priemer:
+\begin{equation}
+E(\pi|y)  = \frac{24}{74} \cdot \frac{1}{4} + \frac{50}{74} \cdot \frac{15}{50} = 0.2838
+\end{equation}
+
+Podiel v apriórnom modeli:
+\begin{equation}
+\pi = \frac{6}{6 + 18} = 0.25
+\end{equation}
+
+Podiel - dáta:
+\begin{equation}
+\pi = \frac{15}{50} = 0.3
+\end{equation}
+
+Podiel v posteriórnom modeli:
+\begin{equation}
+\pi = \frac{15}{74} = 0.2838
+\end{equation}
+
+**Posterior je bližšie k dátam ako k prioru.**
+
+### Graf - posteriórny model
+
+```{r posterior-plot, fig.width=7, fig.height=4.5}
+plot_beta(alpha = alpha_post, beta = beta_post, mean = TRUE, mode = TRUE) +
+  labs(
+    title = "Posteriórny Beta model pre proporciu cyklistov",
+    subtitle = paste0("Beta(", alpha_post, ", ", beta_post, ")")
+  )
+```
+
+Personál univerzity si myslel, že približne 25% študentov pravidelne jazdí na bicykli. V prieskume 50 študentov bolo 15 cyklistov (30%). <br> 
+Po aktualizácii dátami máme posteriórny model so strednou hodnotou podielu 28.4%
+- Je to medzi priorom (25%) a dátami (30%)
+- Bližšie k dátam, pretože dáta mali väčšiu váhu
+
+SD klesla, graf sa zúžil - máme väčšiu istotu
+
+
+# Exercise 4.18: A Sequential Employee
+
+Riešenie cvičenia 4.18 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-4#exercises-3) 
+
+
+> The shoe company described in Exercise 4.17 brings in a fourth employee. They start with the same Beta(4, 3) prior for $\pi$ as the first three employees but, not wanting to re-create work, don't collect their own data. Instead, in their first day on the job, the new employee convinces the first employee to share their data. On the second day they get access to the second employee's data and on the third day they get access to the third employee's data.
+>
+> a. Suppose the new employee updates their posterior model of $\pi$ at the end of each day. What's their posterior at the end of day one? At the end of day two? At the end of day three?
+>
+> b. Sketch the new employee's prior and three (sequential) posteriors. In words, describe how their understanding of $\pi$ evolved over their first three days on the job.
+>
+> c. Suppose instead that the new employee didn't update their posterior until the end of their third day on the job, after they'd gotten data from all three of the other employees. Specify their posterior model of $\pi$ and compare this to the day three posterior from part (a).
+
+## Solution
+Parameter $\pi$ = pravdepodobnosť, že používateľ klikne na reklamu.
+
+**Všetci zamestnanci majú rovnaký apriórny model:**
+\begin{equation}
+\pi \sim \text{Beta}(4, 3)
+\end{equation}
+
+**Štvrtý zamestnanec (dáta zo 4.17):**
+
+- Začína s rovnakým priorom Beta(4, 3)
+- Získava dáta postupne od kolegov:
+  - **Deň 1:** Dáta od zamestnanca 1 (0 kliknutí z 1 pokusu)
+  - **Deň 2:** Dáta od zamestnanca 2 (3 z 10 pokusov)
+  - **Deň 3:** Dáta od zamestnanca 3 (20 zo 100 pokusov)
+
+
+```{r data-from-417, echo=FALSE}
+# z cvičenia 4.17
+# # Zamestnanec 1: testoval na 1 osobe - neklikla (y1=0, n1=1)
+# Zamestnanec 2: (y2=3, n2=10)
+# Zamestnanec 3: (y3=20, n3=100)
+
+y1 <- 0
+n1 <- 1
+employee_1 <- list(y = y1, n = n1)
+y2 <- 3
+n2 <- 10
+employee_2 <- list(y = y2, n = n2)
+y3 <- 20
+n3 <- 100
+employee_3 <- list(y = y3, n = n3)
+```
+
+### a. Sekvenčná aktualizácia posterioru
+
+**Prior pre štvrtého zamestnanca:**
+\begin{equation}
+\pi \sim \text{Beta}(4, 3)
+\end{equation}
+
+```{r initial-prior, echo = FALSE}
+# Počiatočné hyperparametre
+a <- 4
+b <- 3
+
+prior <- list (a = a, 
+               b = b, 
+               mean = a/(a+b), 
+               SD = sqrt((a * b) / ((a + b)^2 * (a + b + 1))),
+               mode = (a - 1)/(a + b - 2))
+```
+
+**Charakteristiky:**
+\begin{align}
+E(\pi) &= \frac{4}{4 + 3} = \frac{4}{7} \approx 0.5714 \\
+\text{Mode}(\pi) &= \frac{4 - 1}{4 + 3 - 2} = \frac{3}{5} = 0.6 \\
+\text{SD}(\pi) &\approx 0.1741
+\end{align}
+
+#### Update beta-binomického modelu
+**Prior:**
+\begin{equation}
+\pi \sim \text{Beta}(\alpha, \beta)
+\end{equation}
+
+**Dáta:**
+\begin{equation}
+Y | \pi \sim \text{Binomial}(n, \pi)
+\end{equation}
+
+**Posterior:**
+\begin{equation}
+\pi | Y = y \sim \text{Beta}(\alpha + y, \beta + n - y)
+\end{equation}
+
+**Pri sekvenčnej analýze:** Posterior z jedného dňa sa stáva priorom pre ďalší deň
+
+#### Deň 1: Dáta od zamestnanca 1
+
+**Prior na začiatku dňa 1:** Beta(4, 3)
+
+**Dáta od zamestnanca 1:** $y_1 = 0$ kliknutí z $n_1 = 1$ pokusu
+
+**Posterior na konci dňa 1:**
+\begin{align}
+\alpha_1 &= 4 + 0 = 4 \\
+\beta_1 &= 3 + 1 - 0 = 4
+\end{align}
+
+\begin{equation}
+\boxed{\pi_\text{deň 1} \sim \text{Beta}(4, 4)}
+\end{equation}
+
+#### Aktualizácia beta modelu po prvom dni
+```{r day1, echo = FALSE}
+# Aktualizácia po dni 1
+a <- prior$a + employee_1$y
+b <- prior$b + employee_1$n - employee_1$y
+
+posterior1 <- list (a = a, 
+               b = b, 
+               mean = a/(a + b), 
+               SD = sqrt((a * b) / ((a + b)^2 * (a + b + 1))),
+               mode = (a - 1)/(a + b - 2))
+
+summarize_beta_binomial(alpha = prior$a, beta = prior$b, y = employee_1$y, n = employee_1$n)
+plot_beta_binomial(alpha = prior$a, beta = prior$b, y = employee_1$y, n = employee_1$n)
+
+```
+
+#### Deň 2: Dáta od zamestnanca 2
+
+**Prior na začiatku dňa 2:** Beta(4, 4) (posterior z dňa 1)
+
+**Dáta od zamestnanca 2:** $y_2 = 3$ kliknutia z $n_2 = 10$ pokusov
+
+**Posterior na konci dňa 2:**
+\begin{align}
+\alpha_2 &= 4 + 3 = 7 \\
+\beta_2 &= 4 + 10 - 3 = 11
+\end{align}
+
+\begin{equation}
+\boxed{\pi_\text{deň 2} \sim \text{Beta}(7, 11)}
+\end{equation}
+
+```{r day2, echo = FALSE}
+# Aktualizácia po dni 2
+a <- posterior1$a + employee_2$y
+b <- posterior1$b + employee_2$n - employee_2$y
+
+posterior2 <- list (a = a, 
+               b = b, 
+               mean = a/(a + b), 
+               SD = sqrt((a * b) / ((a + b)^2 * (a + b + 1))),
+               mode = (a - 1)/(a + b - 2))
+
+summarize_beta_binomial(alpha = posterior1$a, beta = posterior1$b, y = employee_2$y, n = employee_2$n)
+plot_beta_binomial(alpha = posterior1$a, beta = posterior1$b, y = employee_2$y, n = employee_2$n)
+
+```
+
+#### Deň 3: Dáta od zamestnanca 3
+
+**Prior na začiatku dňa 3:** Beta(7, 11) (posterior z dňa 2)
+
+**Dáta od zamestnanca 3:** $y_3 = 20$ kliknutí z $n_3 = 100$ pokusov
+
+**Posterior na konci dňa 3:**
+\begin{align}
+\alpha_3 &= 7 + 20 = 27 \\
+\beta_3 &= 11 + 100 - 20 = 91
+\end{align}
+
+\begin{equation}
+\boxed{\pi_\text {deň 3} \sim \text{Beta}(27, 91)}
+\end{equation}
+
+```{r day3, echo = FALSE}
+# Aktualizácia po dni 3
+a <- posterior2$a + employee_3$y
+b <- posterior2$b + employee_3$n - employee_3$y
+
+posterior3 <- list (a = a, 
+               b = b, 
+               mean = a/(a + b), 
+               SD = sqrt((a * b) / ((a + b)^2 * (a + b + 1))),
+               mode = (a - 1)/(a + b - 2))
+
+summarize_beta_binomial(alpha = posterior2$a, beta = posterior2$b, y = employee_3$y, n = employee_3$n)
+plot_beta_binomial(alpha = posterior2$a, beta = posterior2$b, y = employee_3$y, n = employee_3$n)
+
+```
+
+#### Sumár sekvenčnej aktualizácie
+
+```{r sequential-summary}
+
+summary_seq <- data.frame(
+  Den = c("Prior", "Deň 1", "Deň 2", "Deň 3"),
+  Model = c(
+    paste0("Beta(", prior$a, ", ", prior$b, ")"),
+    paste0("Beta(", posterior1$a, ", ", posterior1$b, ")"),
+    paste0("Beta(", posterior2$a, ", ", posterior2$b, ")"),
+    paste0("Beta(", posterior3$a, ", ", posterior3$b, ")")
+  ),
+  Data = c(
+    " - ",
+    paste0(employee_1$y, " z ", employee_1$n),
+    paste0(employee_2$y, " z ", employee_2$n),
+    paste0(employee_3$y, " z ", employee_3$n)
+  ),
+  Mean = c(prior$mean, posterior1$mean, posterior2$mean, posterior3$mean),
+  SD = c(prior$SD, posterior1$SD, posterior2$SD, posterior3$SD)
+)
+
+summary_seq <- summary_seq %>%
+  mutate(across(c(Mean, SD), ~round(.x, 4)))
+
+knitr::kable(summary_seq, caption = "Sekvenčná aktualizácia posterioru")
+```
+
+### b. Vizualizácia sekvenčnej zmeny
+
+#### Graf všetkých modelov
+
+```{r sequential-plot, fig.width=8, fig.height=6}
+# Vytvorenie dát pre grafy
+pi_vals <- seq(0, 1, length.out = 501)
+
+# Hustoty pre všetky modely
+prior$density <- dbeta(pi_vals, prior$a, prior$b)
+posterior1$density <- dbeta(pi_vals, posterior1$a, posterior1$b)
+posterior2$density <- dbeta(pi_vals, posterior2$a, posterior2$b)
+posterior3$density <- dbeta(pi_vals, posterior3$a, posterior3$b)
+
+# Data frame pre ggplot
+df_sequential <- data.frame(
+  pi = rep(pi_vals, 4),
+  density = c(prior$density, posterior1$density, posterior2$density, posterior3$density),
+  Model = rep(c("Prior Beta(4,3)", 
+                "Deň 1: Beta(4,4)", 
+                "Deň 2: Beta(7,11)", 
+                "Deň 3: Beta(27,91)"), 
+              each = length(pi_vals))
+)
+
+# Určenie správneho poradia
+df_sequential$Model <- factor(df_sequential$Model, 
+                              levels = c("Prior Beta(4,3)", 
+                                        "Deň 1: Beta(4,4)", 
+                                        "Deň 2: Beta(7,11)", 
+                                        "Deň 3: Beta(27,91)"))
+
+# Graf
+ggplot(df_sequential, aes(x = pi, y = density, color = Model, linetype = Model)) +
+  geom_line(size = 1.1) +
+  labs(
+    title = "Sekvenčná evolúcia posterioru",
+    subtitle = "Postupná aktualizácia poznania o π",
+    x = expression(pi ~ "(pravdepodobnosť kliknutia)"),
+    y = "Hustota pravdepodobnosti",
+    color = "Model",
+    linetype = "Model"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("orange", "blue", "green", "red")) +
+  geom_vline(xintercept = c(prior$mean, posterior1$mean, posterior2$mean, posterior3$mean), 
+             linetype = "solid", alpha = 0.3)
+```
+**Kľúčové pozorovania:**
+
+- Na začiatku očakávali pravdepodobnosť kliknutia `r round(prior$mean, 3)`
+- Zamestnanec 1 nepriniesol žiadne kliknutie (0 z 1), t.j. 0% úspešnosť, očakávanie kleslo len málo, na `r round(posterior1$mean, 3)` (50%)
+- Druhý zamestnanec s 10 testami a 20% úspešnosťou : priemer ďalej klesol na `r round(posterior2$mean, 3)`
+- Tretí zamestnanec priniesol najväčšší počet s úspešnosťou 20% a priemer klesol výraznejšie: `r round(posterior3$mean, 3)` (37%)
+- Zaroveň sa postupne zmenšovala smerodajná odchýlka: z `r round(prior$SD, 3)` postupne cez `r round(posterior1$SD, 3)`, cez `r round(posterior2$SD, 3)` a výrazne klesla až s počtom testovaní od 3. zamestnanca na konečnú hodnotu: `r round(posterior3$SD, 3)`
+- Čiže na konci máme odhad oveľa užší a tým sme si istejší
+
+### c. Porovnanie sekvenčnej vs. jednorázovej aktualizácie
+
+#### Jednorázová aktualizácia (všetky dáta naraz)
+
+Čo keby štvrtý zamestnanec čakal do konca dňa 3 a aktualizoval prior všetkými dátami naraz?
+
+**Prior:** Beta(4, 3)
+
+**Všetky dáta spolu:**
+\begin{align}
+y_{total} &= y_1 + y_2 + y_3 = 0 + 3 + 20 = 23 \\
+n_{total} &= n_1 + n_2 + n_3 = 1 + 10 + 100 = 111
+\end{align}
+
+**Posterior (jednorázová aktualizácia):**
+\begin{align}
+\alpha_{all} &= 4 + 13 = 27 \\
+\beta_{all} &= 3 + 111 - 23 = 91
+\end{align}
+
+\begin{equation}
+\boxed{\pi | \text{všetky dáta} \sim \text{Beta}(27, 91)}
+\end{equation}
+
+```{r batch-update}
+
+# Jednorazová aktualizácia
+employees <- list(y = employee_1$y + employee_2$y + employee_3$y, n = employee_1$n + employee_2$n + employee_3$n)
+a <- prior$a + employees$y
+b <- prior$b + employees$n - employees$y
+
+total <- list (a = a, 
+               b = b, 
+               mean = a/(a + b), 
+               SD = sqrt((a * b) / ((a + b)^2 * (a + b + 1))),
+               mode = (a - 1)/(a + b - 2))
+
+summarize_beta_binomial(alpha = prior$a, beta = prior$b, y = employees$y, n = employees$n)
+plot_beta_binomial(alpha = prior$a, beta = prior$b, y = employees$y, n = employees$n)
+```
+
+#### Porovnanie výsledkov
+
+```{r comparison-pr6}
+comparison <- data.frame(
+  Metoda = c("Sekvenčná (3 dni)", "Jednorázová (všetky dáta)"),
+  Model = c(
+    paste0("Beta(", posterior3$a, ", ", posterior3$b, ")"),
+    paste0("Beta(", total$a, ", ", total$b, ")")
+  ),
+  Mean = c(posterior3$mean, total$mean),
+  SD = c(posterior3$SD, total$SD)
+)
+
+comparison <- comparison %>%
+  mutate(across(c(Mean, SD), ~round(.x, 4)))
+
+knitr::kable(comparison, caption = "Porovnanie sekvenčnej a jednorázovej aktualizácie")
+```
+
+**Záver:**
+
+\begin{equation}
+\text{Beta}(27, 91)_{\text{sekvenčná}} = \text{Beta}(27, 91)_{\text{jednorázová}}
+\end{equation}
+
+- Finálny posterior je **nezávislý na poradí** dát
+- Nezáleží na tom, či dáta spracujeme **postupne** alebo **naraz**
+- Matematicky:
+
+\begin{equation}
+\text{Beta}(\alpha, \beta) \xrightarrow{y_1, n_1} \text{Beta}(\alpha + y_1, \beta + n_1 - y_1) \xrightarrow{y_2, n_2} \text{Beta}(\alpha + y_1 + y_2, \beta + n_1 - y_1 + n_2 - y_2) \xrightarrow{y_3, n_3} \cdots
+\end{equation}
+
+je ekvivalentné s:
+
+\begin{equation}
+\text{Beta}(\alpha, \beta) \xrightarrow{y_{total}, n_{total}} \text{Beta}(\alpha + y_{total}, \beta + n_{total} - y_{total})
+\end{equation}
+
+# Exercise 5.7: World Cup
+Riešenie cvičenia 5.7 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-5#exercises-4) 
+
+> Let $\lambda$ be the average number of goals scored in a Women’s World Cup game. We’ll analyze  $\lambda$ by the following Gamma-Poisson model where data $Y_i$ is the observed number of goals scored in a sample of World Cup games:
+> \begin{split}
+> Y_i | \lambda & \stackrel{ind}{\sim} \text{Pois}(\lambda) \\
+> \lambda & \sim \text{Gamma}(1, 0.25) \\
+> \end{split}
+> a. Plot and summarize our prior understanding of $\lambda$.<br>
+> b. Why is the Poisson model a reasonable choice for our data $Y_i$? <br>
+> c. The `wwc_2019_matches` data in the fivethirtyeight package includes the number of goals scored by the two teams in each 2019 Women’s World Cup match. Define, plot, and discuss the total number of goals scored per game.
+> d. Identify the posterior model of $\lambda$ and verify your answer using `summarize_gamma_poisson()`.<br>
+> e. Plot the prior pdf, likelihood function, and posterior pdf of $\lambda$. Describe the evolution in your understanding of $\lambda$ from the prior to the posterior.
+
+## Solution
+### a. Apriórny model Gamma pre $\lambda$
+Náhodná premenná $\lambda$ reprezentuje počet gólov za jeden zápas.Tento počet gólov je modelovaný rozdelením $Gamma(s = 1, r = 0.25)$.
+
+> **Pre Gamma rozdelenie platí:**
+>\begin{equation}
+\begin{split}
+E(\lambda) & = \frac{s}{r} = \frac{1}{0.25} = 4 \\
+\text{Mode}(\lambda) & = \frac{s - 1}{r} = \frac{1 - 1}{0.25} = 0 \\
+\text{Var}(\lambda) & = \frac{s}{r^2} = \frac{1}{0.25^2} = 16 \\
+\end{split}
+\end{equation}
+
+```{r prior-setup, echo = FALSE}
+# Parametre priorného modelu
+s <- 1
+r <- 0.25
+```
+
+```{r gamma-model}
+# Číselné charakteristiky pre Gamma model
+summarize_gamma(s, r)
+
+# Gamma model v grafe
+plot_gamma(shape = s, rate = r, mean = TRUE, mode = TRUE)
+```
+
+### b. Prečo Poissonov model? 
+Náhodná premenná $Y_i$ predstavuje koľkokrát nastane gól, t.j. nejaký jav počas zápasu. Táto premenná nemá horné ohraničenie z nejakého počtu pokusov, pri ktorom 
+niečo stane / nenastane. Preto je vhodné modelovať to Poissonovým rozdelením.
+
+### c. Dáta: Celkové počty gólov za zápas
+```{r data-loading, echo=FALSE}
+
+data("wwc_2019_matches")
+wwc_2019_matches <- wwc_2019_matches %>% 
+  mutate(total_goals = score1 + score2)
+
+```
+
+```{r data-info}
+# Frequency
+wwc_2019_matches %>% count(total_goals)
+
+data <- wwc_2019_matches %>% select(total_goals)
+
+# Descriptive characteristics
+cat('Súčet gólov:',sum(data$total_goals), '\n', 
+    'Priemer gólov:',mean(data$total_goals), '\n', 
+    'Rozptyl:',var(data$total_goals), '\n', 
+    'Počet zápasov:',length(data$total_goals), '\n')
+
+# Histogram
+ggplot(data, aes(x = total_goals)) +
+  geom_bar() +
+  labs(title = "Rozdelenie celkového počtu gólov na zápas",
+       x = "Počet gólov", y = "Počet zápasov")
+```
+Priemerný počet gólov počas jedného zápasu je okolo 3. Stred apriórneho modelu bol 4. Rozptyl je teraz menší. 
+
+Pravdepodobnosť roznych hodnot pre $\lambda$ na základe dát o góloch možeme vidieť v grafe pre vierohodnostnú funkciu (neškálovanú).
+
+```{r likelihood}
+# Vierohodnostná funkcia
+plot_poisson_likelihood(y = data$total_goals) 
+```
+
+### d. Posteriórny model
+Posteriorny model je proporcionálny súčinu apriorneho modelu a vierohodnostného modelu:
+
+> Na začiatku apriórny model, ktorý má Gamma rozdelenie: <br>
+> \begin{split}
+> \lambda & \sim \text{Gamma}\left(s = 1, r = 0.25\right) \\
+> \end{split}
+
+> Jednotlivé pozorovania majú Poissonovo rozdelenie: 
+> \begin{split}
+> Y_i | \lambda & \stackrel{ind}{\sim} \text{Pois}(\lambda) \\
+> \end{split}
+
+```{r echo = FALSE}
+cat('Prior: s = ', s, ', r =', r, ', \nDáta: počet gólov =', sum(data$total_goals), ', počet zápasov =', length(data$total_goals))
+```
+
+> Posteriórny model je tiež Gamma s parametrami: <br>
+> \begin{equation}
+> \lambda|\vec{y} \; \sim \; \text{Gamma}\left(s + \sum y_i, \; r + n\right) = \\
+> \lambda|\vec{y} \; \sim \; \text{Gamma}\left(1 + 146 = 147, \; 0.25 + 52\right) \\
+> \lambda|\vec{y} \; \sim \; \text{Gamma}\left(147, \; 52.25\right) \\
+> \end{equation}
+> kde $y_i$ sú jednotlivé počty gólov a $n$ je počet zápasov.
+
+> **Posterior Gamma rozdelenie má teda vlastnosti:**
+>\begin{equation}
+\begin{split}
+E(\lambda) & = \frac{s}{r} = \frac{147}{52.2} \approx 2.81 \\
+\text{Mode}(\lambda) & = \frac{s - 1}{r} = \frac{147 - 1}{52.2} \approx 2.79 \\
+\text{Var}(\lambda) & = \frac{s}{r^2} = \frac{147}{52.2^2} \approx 0.054 \\
+\end{split}
+\end{equation}
+
+**Prior vs. posterior**
+Porovnanie charakteristík apriórneho a posteriórneho Gamma modelu
+```{r comparison, echo = FALSE}
+# Porovnanie charakteristík
+comparison <- summarize_gamma_poisson(shape = s, rate = r, 
+                                      sum_y = sum(data$total_goals), n = length(data$total_goals))
+
+data_stats <- data.frame(
+  model = "data",
+  shape = NA,
+  rate = NA,
+  mean = mean(data$total_goals),
+  mode = as.numeric(names(sort(table(data$total_goals), decreasing = TRUE)[1])),
+  var = var(data$total_goals),
+  sd = sd(data$total_goals)
+)
+comparison <- rbind(comparison, data_stats)
+comparison
+```
+**Interpretácia:** Apriórne a aposteriórne rozdelenie sú kongujované, t.j. rovnakého typu.
+
+
+### e. Graf - porovnanie modelov
+V grafe vidíme rozdelenia všetkých troch modelov: apriórny, vierohodnosť, posteriórny
+```{r posterior-plot-pr6, echo = FALSE}
+# Zobrazenie prioru, vierohodnosti a posterioru
+plot_gamma_poisson(shape = s, rate = r, sum_y = sum(data$total_goals), n = length(data$total_goals)) +
+  xlim(0,10)
+
+```
+
+Vidíme, že postreriórny model v podstate celkom prekryl vierohodnostný model. To je preto, že:
+- máme pomerne veľa dát - 52 zápasov
+- prior bol málo informatívny (veľký rozptyl, nízke hodnoty $s$ a $r$)
+- teda dáta dominujú, čiže posteriórne rozdelenie je približne rovnaké ako vierohodnostné
+
+#### Len posteriorný model
+Ak chceme detailne pozrieť rozdelenie pre posteriórny model, zobrazíme ho ako apriórny so zmenenými charakteristikami podľa vzťahu pre (posterior).
+```{r posterior-only}
+# Vizualizácia posteriorného modelu
+plot_gamma(shape = s + sum(data$total_goals), rate = r + length(data$total_goals), mean = TRUE, mode = TRUE)
+
+```
+
+# Exercise 5.9: Investing in Stock
+
+Riešenie cvičenia 5.9 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-5#exercises-4) 
+Modelovanie ceny investície počas dňa normálnym rozdelením <br>
+a cvičenia 5.10 z rovnakej knihy Update apriórneho modelu o dáta
+
+> You just bought stock in FancyTech. Let random variable $\mu$, be the average dollar amount that your FancyTech stock goes up or down in a one-day period. At first, you believe that $\mu$ is 7.2 dollars with a standard deviation of 2.6 dollars. <br>
+> a. Tune and plot an appropriate Normal prior model for$\mu$.<br>
+> b. According to your plot, does it seem plausible that the FancyTech stock would increase by an average of 7.6 dollars in a day? <br>
+> c. Does it seem plausible that the FancyTech stock would increase by an average of 4 dollars in a day? <br>
+> d. What is the prior probability that, on average, the stock price goes down? Hint: `pnorm()`. <br>
+> e. What is the prior probability that, on average, your stock price goes up by more than 8 dollars per day? 
+
+
+## Solution:
+### a. Apriórny model Normal pre $\mu$
+Na začiatku veríme, že stredná hodnota je 7.2 a odchýlka 2.6. To sú teda parametre apriórneho normálneho modelu. Smerodajná odchýlka vyjadruje našu neistotu ohľadom strednej hodnoty.<br>
+**Hyperparametre:**
+$\theta$ = apriorna stredná hodnota pre $\mu$ <br>
+$\tau$ = apriórna smerodajná odchýlka (miera neistoty v odhade $\mu$)
+
+>\begin{equation}
+\begin{split}
+\mu \sim N(\theta = 7.2, \tau^2 = 2.6^2)
+\end{split}
+\end{equation}
+
+#### Graf - apriórny model:
+```{r prior-graph, echo = FALSE}
+theta <- 7.2
+tau <- 2.6
+plot_normal(mean = theta, sd = tau)
+```
+
+### b. Vierohodnosť hodnoty 7.6
+```{r value-76, echo = FALSE}
+value <- 7.6
+plot_normal(mean = theta, sd = tau) +
+  geom_vline(xintercept = value, color = 'red', linetype = 'solid')
+
+cat(
+  'Výška krivky v bode', value, 'je', dnorm(x = value, mean = theta, sd = tau), '\n',
+  'Výška krivky v strednej hodnote je', dnorm(x = theta, mean = theta, sd = tau), '\n',
+  'Vzdialenosť hodnoty', value, 'od strednej hodnoty je',
+  abs((value - theta)/tau), '-násobok smerodajnej odchýlky.\n',
+  sep = ' '
+)
+
+```
+Hodnota 7.6 je blízko strednej hodnoty 7.2. Je teda vysoko vierohodná.
+
+### c. Vierohodnosť hodnoty 4
+```{r value-4, echo = FALSE}
+value <- 4
+plot_normal(mean = theta, sd = tau) +
+  geom_vline(xintercept = value, color = 'red', linetype = 'solid')
+
+cat ('Výška krivky v bode', value, 'je', dnorm(x = value, mean = theta, sd = tau))
+cat ('Výška krivky v strednej hodnote je', dnorm(x = theta, mean = theta, sd = tau))
+cat ('Vzdialenosť hodnoty ', value, ' od strednej hodnoty je ', abs((value - theta)/tau), '-násobok smerodajnej odchýlky.', sep = '')
+```
+Hodnota 4 je ďalej od strednej hodnoty 7.2. Je teda oveľa menej vierohodná.
+
+
+### d. Pravdepodobnosť poklesu
+obsah modrej plochy
+```{r prob-down, echo = FALSE}
+value <- 0
+plot_normal(mean = theta, sd = tau) +
+  stat_function(fun = dnorm, args = list(mean = theta, sd = tau),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(-5, value)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť, že cena bude klesať je', round(pnorm(q = value, mean = theta, sd = tau), 4))
+
+```
+### e. Pravdepodobnosť rastu o viac ako 8
+obsah modrej plochy
+```{r prob-up-8, echo = FALSE}
+value <- 8
+plot_normal(mean = theta, sd = tau) +
+  stat_function(fun = dnorm, args = list(mean = theta, sd = tau),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(value, 20)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť, že cena bude rásť o viac ako', value, 'je', round(pnorm(q = value, mean = theta, sd = tau, lower.tail = FALSE), 4))
+
+```
+
+# Exercise 5.10: Investing in Stock with data
+
+> Continuing with Exercise 5.9, it’s reasonable to assume that the daily changes in FancyTech stock value are Normally distributed around 
+an unknown mean of $\mu$ with a known standard deviation of $\sigma = 2$  dollars. On a random sample of 4 days, you observe changes in stock value of $-0.7$, $1.2$, $4.5$, and $-4$ dollars. <br>
+> a. Plot the corresponding likelihood function of $\mu$. <br>
+> b. Plot the prior pdf, likelihood function, and the posterior pdf for $\mu$. <br>
+> c. Use 'summarize_normal_normal()' to calculate descriptive statistics for the prior and the posterior models. <br>
+> d. Comment on how your understanding about $\mu$ evolved from the prior (in the previous exercise) to the posterior based on the observed data. <br>
+> e. What is the posterior probability that, on average, the stock price goes down? Hint: `pnorm()`. <br>
+> f. What is the posterior probability that, on average, your stock price goes up by more than 8 dollars per day?
+
+
+## Solution:
+### a. Vierohodnostný model pre $\mu$
+#### Dáta: 4 pozorovania na burze
+
+```{r }
+y <- c(-0.7, 1.2, 4.5, -4)
+sd <- 2
+
+```
+
+> Neznámy hyperparameter $\mu$ má normálne rozdelenie.
+>\begin{equation}
+\mu \sim N(\theta = 7.2, \tau^2 = 2.6^2)
+\end{equation}
+
+> Za predpokladu, že poznáme $\mu$, tak zmenu ceny na burze modelujeme normálnym rozdelením. T.j. vierohodnostná funkcia je:
+> \begin{equation}
+Y | \mu \sim N(\mu, \sigma^2) \\
+\end{equation}
+
+> Označme ($Y_1$,$Y_2$,\ldots,$Y_n$) zmeny na burze v jednotlivých pozorovaných dňoch. Zmena ceny za jeden deň je **nezávisle** modelovaná normálnym modelom. 
+>\begin{equation}
+Y_i | \mu \stackrel{ind}{\sim} \text{N}(\mu, \sigma^2) \\
+\end{equation}
+
+> Neanalyzujeme však každý deň samostatne, využijeme súhrnnú informáciu zo všetkých dní, t.j. máme funkciu združenej hustoty pravdepodobnosti: <br><br>
+> **Združená hustota pravdepodobnosti**<br>
+><ul><li>Nech $(Y_1,Y_2,\ldots,Y_n)$ sú nezávislé pozorovania náhodnej premennej a $\vec{y} = (y_1,y_2,\ldots,y_n)$ je vektor týchto pozorovaní </li>
+><li>$f(y_i | \mu)$ označuje funkciu hustoty pre jedno pozorovanie $Y_i$.</li></ul>
+>Za predpokladu nezávislosti potom možeme napísať združenú funkciu hustoty pre vektor zistených dát:<br>
+> \begin{equation}
+f(\vec{y} | \mu) = \prod_{i=1}^{n}f(y_i|\mu) = \prod_{i=1}^{n}\frac{1}{\sqrt{2\pi\sigma^2}}\exp\bigg[{-\frac{(y_i-\mu)^2}{2\sigma^2}}\bigg]  
+> \end{equation}
+
+> Teda máme vierohodnostnú funkciu pre $\mu$ (tá je rovnaká ako združená hustota, líši sa len pochopením parametra)<br>
+\begin{equation}
+L(\mu |\vec{y}) \propto \prod_{i=1}^{n} \exp\bigg[{-\frac{(y_i-\mu)^2}{2\sigma^2}}\bigg] =  \exp\bigg[{-\frac{\sum_{i=1}^n(y_i-\mu)^2}{2\sigma^2}}\bigg]
+\end{equation}
+
+> Po zjednodušení s využitím $y$ = priemer $y_i$ a $n$ (počet) dostávame proporcionálnu funkciu k vierohodnostnej:
+\begin{equation}
+L(\mu | \vec{y}) \propto \exp\bigg[{-\frac{(\bar{y}-\mu)^2}{2\sigma^2/n}}\bigg] \;\;\;\; \text{ for } \; \mu \in (-\infty, \infty)
+\end{equation}
+
+#### Graf pre vierohodnostnú funkciu (likehood)
+
+Graf zobrazuje (neškálovanú) vierohodnosť získaných dát za predpokladu, že by parameter $\mu$ bol postupne z intervalu približne  [-4; 4]
+```{r likelihood-pr7}
+# Vierohodnostná funkcia
+plot_normal_likelihood(y = y, sigma = sd) # odchylku neodhadujeme, je urcena vopred
+
+```
+
+#### Vierohodnostná funkcia podľa vzorca pre naše dáta: 
+Pre naše dáta: 
+```{r likehood-hodnoty, echo = FALSE}
+cat('Známa odchýlka sigma: ', sd, '\nPriemer pozorovaných hodnôt: ', mean(y), ', ', 'počet pozorovaných hodnôt: ', length(y), sep ='')
+```
+\begin{equation}
+L(\mu | \vec{y}) \propto \exp\bigg[{-\frac{(0.25-\mu)^2}{2\cdot2^2/4}}\bigg] = \exp\bigg[{-\frac{(0.25-\mu)^2}{2}}\bigg]
+\end{equation}
+
+```{r likelihood-formula}
+# Vierohodnostná funkcia podla vzorca
+xl <- seq(from = -4, to = 4, length = 501)
+yl <- exp(-(0.25-xl)^2/1.6)
+df <- data.frame(xl, yl)
+ggplot(data = df, mapping = aes(x = xl, y = yl)) +
+  geom_line() +
+  labs(x = expression(mu), y = expression(L(mu~"|"~y)))
+```
+
+### b. Vykresliť priorné pdf, vierohodnostnú funkciu a posteriorné pdf pre $\mu$
+**Posteriorný model**
+Posteriorny model je proporcionálny súčinu apriorneho modelu a vierohodnostného modelu: <br>
+
+> Na začiatku apriórny model, ktorý má normálne rozdelenie: <br>
+> \begin{split}
+> \mu \sim N(\theta, \tau^2) \\
+> \end{split}
+
+> Jednotlivé pozorovania majú normálne rozdelenie: 
+> \begin{split}
+> Y_i | \mu \; \sim \; N(\mu, \sigma^2) \\
+> \end{split}
+
+> Na základe apriórneho modelu a pozorovania dát --> posteriórny Normal model:<br>
+> \begin{equation}
+> \mu|\vec{y} \; \sim \;  N\bigg(\theta\frac{\sigma^2}{n\tau^2+\sigma^2} + \bar{y}\frac{n\tau^2}{n\tau^2+\sigma^2}, \; \frac{\tau^2\sigma^2}{n\tau^2+\sigma^2}\bigg)
+> \end{equation}
+> kde $\overline{y}$ je priemernou hodnotou poZorovaní $\vec{y} = (y_1,y_2,\ldots,y_n)$
+
+#### Graf pre apriórný, vierohodnostný aj posteriórny model
+V grafe vidíme rozdelenia všetkých troch modelov. 
+```{r posterior-plot-pr7}
+# Zobrazenie prioru, vierohodnosti a posterioru
+  # theta, tau - from prior
+  # sd - supposed to be constant
+  # y_bar, n - from data
+plot_normal_normal(mean = theta, sd = tau, sigma = sd, y_bar = mean(y) , n = length(n))
+```
+
+#### Posteriórny model pre naše dáta podľa vzorca
+> \begin{split}
+> \mu|\vec{y} & \sim N\bigg(\theta\frac{\sigma^2}{n\tau^2+\sigma^2} + \bar{y}\frac{n\tau^2}{n\tau^2+\sigma^2}, \frac{\tau^2\sigma^2}{n\tau^2+\sigma^2}\bigg) \\
+> \mu|\vec{y} & \sim N\bigg(7.2\cdot\frac{2^2}{4\cdot2.6^2+2^2} + {0.25}\frac{4*2.6^2}{4\cdot2.6^2+2^2}, \frac{2.6^2*2^2}{4*2.6^2+2^2}\bigg) \\
+> \mu|\vec{y} & \sim N\bigg(1.1456, 0.9333\bigg)
+> \end{split}
+
+```{r posterior-hodnoty, echo = FALSE}
+# Posteriórny model podla vzorca
+  # theta, tau - from prior
+  # sd - supposed to be constant
+  # y_bar, n - from data
+
+y_n <- length(y)
+y_mean <- mean(y)
+menovatel <- y_n * tau^2 + sd^2
+
+mu_post <- theta * sd^2/menovatel + y_mean * y_n * tau^2 / menovatel
+sigma_post <- sqrt(tau^2 * sd^2 / menovatel)
+
+cat('Vypočítaná stredná hodnota pre posterior podľa vzorca: ', mu_post, '\nsmerodajná odchýlka: ', sigma_post, sep ='')
+plot_normal(mu_post, sigma_post)
+```
+
+### c. Porovnať charakteristiky apriórneho a posteriórneho modelu
+```{r posterior-summarize, echo = FALSE}
+# Posteriórny model pomocou funkcie:
+summarize_normal_normal(mean = theta, sd = tau, sigma = sd, y_bar = y_mean , n = y_n)
+
+cat('Váha strednej hodnoty z priórneho modelu je: ',  sd^2/menovatel, 
+    '\nváha strednej hodnoty z dát je: ', y_n * tau^2 / menovatel, sep ='')
+
+```
+
+### d. Zhodnotenie výsledkov
+Na začiatku sme predpokladali, že priemerná zmena akcie je 7,2+-2,6. Avšak pozorované dáta majú priemer len 0,25. Preto sa stredná  hodnota aposteriórnej hustoty výrazne posunula doľava do 1,146. Posteriórny model je váženým priemerom priórnej hustoty a dát. Váha apriórnej strednej hodnoty je oveľa nižšia ako z dát, preto je posteriórna stredná hodnota bližšia k dátovej. 
+
+### e. Pravdepodobnosť poklesu pre posteriórny model
+```{r prob-down-post, echo = FALSE}
+value <- 0
+plot_normal(mean = mu_post, sd = sigma_post) +
+  stat_function(fun = dnorm, args = list(mean = mu_post, sd = sigma_post),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(-5, value)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť poklesu: \nPôvodne: ', round(pnorm(q = value, mean = theta, sd = tau), 4),
+     '\nTeraz', round(pnorm(q = value, mean = mu_post, sd = sigma_post), 4))
+```
+
+### f. Pravdepodobnosť rastu o viac ako 8 pre posteriórny model
+```{r prob-up-8-post, echo = FALSE}
+value <- 8
+plot_normal(mean = mu_post, sd = sigma_post) +
+  stat_function(fun = dnorm, args = list(mean = mu_post, sd = sigma_post),
+                geom = "area", fill = "lightblue", alpha = 0.5,
+                xlim = c(value, 10)) +
+  geom_vline(xintercept = value, color = "red", linetype = "dashed")
+
+cat ('Pravdepodobnosť rastu o viac ako 8: \nPôvodne: ', round(pnorm(q = value, mean = theta, sd = tau, lower.tail = FALSE), 4),
+     '\nTeraz', pnorm(q = value, mean = mu_post, sd = sigma_post, lower.tail = FALSE))
+
+```
+
+# Exercise 5.19: The Beta-Geometric Model
+
+Riešenie cvičenia 5.19 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-5#exercises-4) 
+
+Odvodenie Beta-Geometrického modelu a dokázanie konjugovanosti Beta prioru pre Geometrický dátový model.
+
+> Consider the following new Bayesian model:
+> \begin{split}
+> Y|\theta & \sim \text{Geometric}(\theta) \\
+> \theta & \sim \text{Beta}(\alpha, \beta) \\
+> \end{split}
+> where the Geometric model has pmf $f(y|\theta) = \theta (1 - \theta)^{y - 1}$ for $y \in \{1,2,\ldots\}$.
+>
+> a. Derive the posterior model for $\theta$ given observed data $Y = y$. If possible, identify the name of the posterior model and its parameters.
+>
+> b. Is the Beta model a conjugate prior for the Geometric data model?
+
+## Solution
+
+### a. Odvodenie posteriórneho modelu pre $\theta$
+
+#### Krok 1: Definícia apriórneho modelu (Beta rozdelenie)
+
+> Apriórny model pre parameter $\theta$ je Beta rozdelenie:
+> \begin{equation}
+> \theta \sim \text{Beta}(\alpha, \beta)
+> \end{equation}
+
+> Hustota pravdepodobnosti (pdf) Beta rozdelenia je:
+> \begin{equation}
+> f(\theta) = \frac{\Gamma(\alpha + \beta)}{\Gamma(\alpha)\Gamma(\beta)} \theta^{\alpha-1}(1-\theta)^{\beta-1} \;\; \text{pre } \theta \in [0,1]
+> \end{equation}
+> Pri ďalšom odvodzovaní aposteriórnej hustoty stačí používať iba **jadro** Beta rozdelenia, t.j. môžeme vypustiť časti funkcie, ktoré nezávisia od parametra $theta$:
+> \begin{equation}
+> f(\theta) \propto \theta^{\alpha-1}(1-\theta)^{\beta-1}
+> \end{equation}
+
+#### Krok 2: Vierohodnostný model (Geometrické rozdelenie)
+Geometrické rozdelenie modeluje počet pokusov potrebných na dosiahnutie prvého úspechu, kde $\theta$ je pravdepodobnosť úspechu v jednom pokuse.
+
+> Funkcia hustoty Geometrického rozdelenia s pravdepodobnosťou $theta$ je:
+> \begin{equation}
+f(y|\theta) = \theta (1 - \theta)^{y - 1} \;\; \text{pre } y \in \{1,2,\ldots\}
+> \end{equation}
+
+> Po pozorovaní dát $Y = y$ máme vierohodnostnú funkciu (likelihood). Tvar funkcie je rovnaký ako pre funkciu hustoty, mení sa len chápanie paramerov (tu je parametrom $theta$).
+> \begin{equation}
+L(\theta|y) = \theta(1-\theta)^{y-1} \;\; \text{pre } \theta \in [0,1]
+\end{equation}
+
+#### Krok 3: Výpočet jadra posteriórneho modelu
+Podľa Bayesovej vety je posteriórna hustota pravdepodobnosti pre $\theta$ proporcionálna k súčinu apriórnej hustoty a vierohodnostnej funkcie:
+
+> \begin{equation}
+> f(\theta|y) \propto f(\theta) \cdot L(\theta|y)
+> \end{equation}
+
+> Ako apriórnu hustotu dosadíme len jadro (stačí to) a vierohodnosť, potom poupravujeme: 
+> \begin{split}
+> f(\theta|y) & \propto \theta^{\alpha-1}(1-\theta)^{\beta-1} \cdot \theta(1-\theta)^{y-1} = \\
+>  & = \theta^{\alpha-1} \cdot \theta^1 \cdot (1-\theta)^{\beta-1} \cdot \theta(1-\theta)^{y-1} = \\  
+> & = \theta^{\alpha-1+1} \cdot (1-\theta)^{\beta-1+y-1} = \\
+> & = \theta^{\alpha} \cdot (1-\theta)^{\beta+y-2} \\
+> \end{split}
+
+#### Krok 4: Odvodenie rozdelenia pre posteriórny model
+> Čiže apriórna hustota pre **$Beta(\alpha, \beta)$** mala jadro:
+> \begin{equation}
+> f(\theta) \propto \theta^{\alpha-1}(1-\theta)^{\beta-1}
+> \end{equation}
+
+> Posteriórna hustota má jadro: 
+> \begin{equation}
+> f(\theta) \propto \theta^{\alpha} \cdot (1-\theta)^{\beta+y-2}
+> \end{equation}
+> Preto parametre pre posteriórnu hustotu sú (+1  k obom exponentom): <br>
+> <ul> <li>$\alpha_post$ = $\alpha$ + 1 </li>
+> <li> $\beta_post$ = $\beta + y - 2 + 1$ = $\beta + y - 1$ </li></ul>
+> To zodpovedá **Beta rozdeleniu** s parametrami $(\alpha+1, \beta+y-1)$.
+
+**Posteriórny model pre $\theta$ je teda:**
+
+> \begin{equation}
+> \boxed{\theta|y \sim \text{Beta}(\alpha + 1, \; \beta + y - 1)}
+> \end{equation}
+
+### b. Je Beta model konjugovaný prior?
+Beta model **je konjugovaný apriórny model** pre Geometrický dátový model.
+Lebo posteriórny model patrí do tej istej rodiny rozdelení, je to tiež Beta model (s inými parametrami).
+
+**Aktualizácia parametrov $\alpha a \beta$:**
+
+> Po dátach $Y = y$ (počet pokusov do prvého úspechu) sa parametre aktualizujú:
+> <ul><li> Parameter $\alpha$ sa aktualizuje na: $\alpha \rightarrow \alpha + 1$ </li>
+> <li> Parameter $\beta$ sa aktualizuje: $\beta \rightarrow \beta + y - 1$ </li>
+> <li> Prior: $\text{Beta}(\alpha, \beta) \rightarrow \text{Beta}(\alpha + 1, \beta + y - 1)$ </li></ul>
+
+**Interpretácia parametrov:**
+
+<ul><li>$\alpha$ reprezentuje počet predchádzajúcich úspechov</li>
+   <li>$\beta$ reprezentuje počet predchádzajúcich neúspechov</li>
+   <li>Po pozorovaní $y$ pokusov s jedným úspechom na konci<br>
+     - pridáme 1 úspech ($\alpha + 1$) <br>
+     - pridáme $y-1$ neúspechov pred úspechom ($\beta + y - 1$)</li></ul>
+

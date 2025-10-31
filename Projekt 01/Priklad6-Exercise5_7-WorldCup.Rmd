@@ -1,0 +1,184 @@
+---
+title: "Exercise 5.7 - World cup"
+subtitle: "Exercise 5.7 - World cup"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 5, fig.height = 3, fig.align = "center")
+```
+
+## Úvod
+
+Riešenie cvičenia 5.7 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-5#exercises-4) 
+Modelovanie počtu gólov v hre pomocou Gamma-Poisson modelu. 
+
+
+```{r libraries, echo =FALSE}
+library(bayesrules)
+library(janitor)
+library(fivethirtyeight)
+library(dplyr)
+library(ggplot2)
+```
+
+## Exercise 5.7: World Cup
+
+> Let $\lambda$ be the average number of goals scored in a Women’s World Cup game. We’ll analyze  $\lambda$ by the following Gamma-Poisson model where data $Y_i$ is the observed number of goals scored in a sample of World Cup games:
+> \begin{split}
+> Y_i | \lambda & \stackrel{ind}{\sim} \text{Pois}(\lambda) \\
+> \lambda & \sim \text{Gamma}(1, 0.25) \\
+> \end{split}
+> a. Plot and summarize our prior understanding of $\lambda$.<br>
+> b. Why is the Poisson model a reasonable choice for our data $Y_i$? <br>
+> c. The `wwc_2019_matches` data in the fivethirtyeight package includes the number of goals scored by the two teams in each 2019 Women’s World Cup match. Define, plot, and discuss the total number of goals scored per game.
+> d. Identify the posterior model of $\lambda$ and verify your answer using `summarize_gamma_poisson()`.<br>
+> e. Plot the prior pdf, likelihood function, and posterior pdf of $\lambda$. Describe the evolution in your understanding of $\lambda$ from the prior to the posterior.
+
+## Solution:
+### a. Apriórny model Gamma pre $\lambda$
+Náhodná premenná $\lambda$ reprezentuje počet gólov za jeden zápas.Tento počet gólov je modelovaný rozdelením $Gamma(s = 1, r = 0.25)$.
+
+> **Pre Gamma rozdelenie platí:**
+>\begin{equation}
+\begin{split}
+E(\lambda) & = \frac{s}{r} = \frac{1}{0.25} = 4 \\
+\text{Mode}(\lambda) & = \frac{s - 1}{r} = \frac{1 - 1}{0.25} = 0 \\
+\text{Var}(\lambda) & = \frac{s}{r^2} = \frac{1}{0.25^2} = 16 \\
+\end{split}
+\end{equation}
+
+```{r prior-setup, echo = FALSE}
+# Parametre priorného modelu
+s <- 1
+r <- 0.25
+```
+
+```{r gamma-model}
+# Číselné charakteristiky pre Gamma model
+summarize_gamma(s, r)
+
+# Gamma model v grafe
+plot_gamma(shape = s, rate = r, mean = TRUE, mode = TRUE)
+```
+
+### b. Prečo Poissonov model? 
+Náhodná premenná $Y_i$ predstavuje koľkokrát nastane gól, t.j. nejaký jav počas zápasu. Táto premenná nemá horné ohraničenie z nejakého počtu pokusov, pri ktorom 
+niečo stane / nenastane. Preto je vhodné modelovať to Poissonovým rozdelením.
+
+### c. Dáta: Celkové počty gólov za zápas
+```{r data-loading, echo=FALSE}
+
+data("wwc_2019_matches")
+wwc_2019_matches <- wwc_2019_matches %>% 
+  mutate(total_goals = score1 + score2)
+
+```
+
+```{r data-info}
+# Frequency
+wwc_2019_matches %>% count(total_goals)
+
+data <- wwc_2019_matches %>% select(total_goals)
+
+# Descriptive characteristics
+cat('Priemer gólov:',mean(data$total_goals), '\n', 
+    'Rozptyl:',var(data$total_goals), '\n', 
+    'Počet zápasov:',length(data$total_goals), '\n')
+
+# Histogram
+ggplot(data, aes(x = total_goals)) +
+  geom_bar() +
+  labs(title = "Rozdelenie celkového počtu gólov na zápas",
+       x = "Počet gólov", y = "Počet zápasov")
+```
+Priemerný počet gólov počas jedného zápasu je okolo 3. Stred apriórneho modelu bol 4. Rozptyl je teraz menší. 
+
+Pravdepodobnosť roznych hodnot pre $\lambda$ na základe dát o góloch možeme vidieť v grafe pre vierohodnostnú funkciu (neškálovanú).
+
+```{r likelihood}
+# Vierohodnostná funkcia
+plot_poisson_likelihood(y = data$total_goals) 
+```
+
+### d. Posteriórny model
+Posteriorny model je proporcionálny súčinu apriorneho modelu a vierohodnostného modelu:
+
+> Na začiatku apriórny model, ktorý má Gamma rozdelenie: <br>
+> \begin{split}
+> \lambda & \sim \text{Gamma}\left(s = 1, r = 0.25\right) \\
+> \end{split}
+
+> Jednotlivé pozorovania majú Poissonovo rozdelenie: 
+> \begin{split}
+> Y_i | \lambda & \stackrel{ind}{\sim} \text{Pois}(\lambda) \\
+> \end{split}
+
+> Posteriórny model je tiež Gamma s parametrami: <br>
+> \begin{equation}
+> \lambda|\vec{y} \; \sim \; \text{Gamma}\left(s + \sum y_i, \; r + n\right) = \text{Gamma}\left(s = 147, \; r =52.2\right) \\
+> \end{equation}
+> kde $y_i$ sú jednotlivé počty gólov a $n$ je počet zápasov.
+
+> **Posterior Gamma rozdelenie má teda vlastnosti:**
+>\begin{equation}
+\begin{split}
+E(\lambda) & = \frac{s}{r} = \frac{147}{52.2} \approx 2.81 \\
+\text{Mode}(\lambda) & = \frac{s - 1}{r} = \frac{147 - 1}{52.2} \approx 2.79 \\
+\text{Var}(\lambda) & = \frac{s}{r^2} = \frac{147}{52.2^2} \approx 0.054 \\
+\end{split}
+\end{equation}
+
+**Prior vs. posterior**
+Porovnanie charakteristík apriórneho a posteriórneho Gamma modelu
+```{r comparison, echo = FALSE}
+# Porovnanie charakteristík
+comparison <- summarize_gamma_poisson(shape = s, rate = r, 
+                                      sum_y = sum(data$total_goals), n = length(data$total_goals))
+
+data_stats <- data.frame(
+  model = "data",
+  shape = NA,
+  rate = NA,
+  mean = mean(data$total_goals),
+  mode = as.numeric(names(sort(table(data$total_goals), decreasing = TRUE)[1])),
+  var = var(data$total_goals),
+  sd = sd(data$total_goals)
+)
+comparison <- rbind(comparison, data_stats)
+comparison
+```
+**Interpretácia:** Apriórne a aposteriórne rozdelenie sú kongujované, t.j. rovnakého typu.
+
+
+### e. Graf - porovnanie modelov
+V grafe vidíme rozdelenia všetkých troch modelov: apriórny, vierohodnosť, posteriórny
+```{r posterior-plot, echo = FALSE}
+# Zobrazenie prioru, vierohodnosti a posterioru
+cat('Prior: s = ', s, ', r =', r, ', \nDáta: počet gólov =', sum(data$total_goals), ', počet zápasov =', length(data$total_goals))
+plot_gamma_poisson(shape = s, rate = r, sum_y = sum(data$total_goals), n = length(data$total_goals)) +
+  xlim(0,10)
+
+```
+
+Vidíme, že postreriórny model v podstate celkom prekryl vierohodnostný model. To je preto, že:
+<ul><li> máme pomerne veľa dát - 52 zápasov </li>
+<li> prior bol málo informatívny (veľký rozptyl, nízke hodnoty $s$ a $r$) </li>
+<li> teda dáta dominujú, čiže posteriórne rozdelenie je približne rovnaké ako vierohodnostné </li>
+</ul>
+
+#### Len posteriorný model
+Ak chceme detailne pozrieť rozdelenie pre posteriórny model, zobrazíme ho ako apriórny so zmenenými charakteristikami podľa vzťahu pre (posterior).
+```{r posterior-only}
+# Vizualizácia posteriorného modelu
+plot_gamma(shape = s + sum(data$total_goals), rate = r + length(data$total_goals), mean = TRUE, mode = TRUE)
+
+```
+

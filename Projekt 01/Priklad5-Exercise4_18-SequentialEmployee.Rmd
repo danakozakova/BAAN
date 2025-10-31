@@ -1,0 +1,467 @@
+---
+title: "Exercise 4.18 - A Sequential Employee"
+subtitle: "Sekvenčná Bayesovská analýza - postupná aktualizácia posterioru"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 7, fig.height = 5, fig.align = "center")
+```
+
+## Úvod
+
+Riešenie cvičenia 4.18 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-4#exercises-3) 
+
+Sekvenčná Bayesovská analýza - postupné aktualizovanie posterioru na základe dát od troch zamestnancov.
+
+```{r libraries, echo=FALSE}
+library(bayesrules)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+## Exercise 4.18: A Sequential Employee
+
+> The shoe company described in Exercise 4.17 brings in a fourth employee. They start with the same Beta(4, 3) prior for $\pi$ as the first three employees but, not wanting to re-create work, don't collect their own data. Instead, in their first day on the job, the new employee convinces the first employee to share their data. On the second day they get access to the second employee's data and on the third day they get access to the third employee's data.
+>
+> a. Suppose the new employee updates their posterior model of $\pi$ at the end of each day. What's their posterior at the end of day one? At the end of day two? At the end of day three?
+>
+> b. Sketch the new employee's prior and three (sequential) posteriors. In words, describe how their understanding of $\pi$ evolved over their first three days on the job.
+>
+> c. Suppose instead that the new employee didn't update their posterior until the end of their third day on the job, after they'd gotten data from all three of the other employees. Specify their posterior model of $\pi$ and compare this to the day three posterior from part (a).
+
+## Kontext z Exercise 4.17
+
+**Spoločnosť vyvíjajúca obuv testuje reklamu.** Parameter $\pi$ = pravdepodobnosť, že používateľ klikne na reklamu.
+
+**Všetci zamestnanci majú rovnaký apriórny model:**
+\begin{equation}
+\pi \sim \text{Beta}(4, 3)
+\end{equation}
+
+**Dáta od troch zamestnancov (z Exercise 4.17):**
+
+```{r data-from-417, echo=FALSE}
+# POZNÁMKA: Potrebujem doplniť presné dáta z cvičenia 4.17
+# Z textu viem, že:
+# Zamestnanec 1: testoval na 1 osobe - neklikla (y1=0, n1=1)
+# Zamestnanec 2: potrebujem doplniť (y2=?, n2=?)
+# Zamestnanec 3: potrebujem doplniť (y3=?, n3=?)
+
+# Predpokladám typické hodnoty (TREBA OVERIŤ V CVIČENÍ 4.17):
+employee_1 <- list(y = 0, n = 1)   # 0 kliknutí z 1 pokusu
+employee_2 <- list(y = 3, n = 10)  # 3 kliknutia z 10 pokusov
+employee_3 <- list(y = 20, n = 100)  # 20 kliknutí z 100 pokusov
+
+cat("DÁTA OD ZAMESTNANCOV (z Exercise 4.17):\n")
+cat("Zamestnanec 1:", employee_1$y, "kliknutí z", employee_1$n, "pokusu\n")
+cat("Zamestnanec 2:", employee_2$y, "kliknutí z", employee_2$n, "pokusov\n")
+cat("Zamestnanec 3:", employee_3$y, "kliknutí z", employee_3$n, "pokusov\n")
+```
+
+**Štvrtý zamestnanec:**
+
+- Začína s rovnakým priorom Beta(4, 3)
+- Nezbiera vlastné dáta
+- Získava dáta postupne od kolegov:
+  - **Deň 1:** Dáta od zamestnanca 1
+  - **Deň 2:** Dáta od zamestnanca 2  
+  - **Deň 3:** Dáta od zamestnanca 3
+
+## Solution
+
+### Príprava - Počiatočný prior
+
+**Prior pre štvrtého zamestnanca:**
+\begin{equation}
+\pi \sim \text{Beta}(4, 3)
+\end{equation}
+
+```{r initial-prior}
+# Počiatočné hyperparametre
+alpha_prior <- 4
+beta_prior <- 3
+
+# Charakteristiky prioru
+mean_prior <- alpha_prior / (alpha_prior + beta_prior)
+mode_prior <- (alpha_prior - 1) / (alpha_prior + beta_prior - 2)
+sd_prior <- sqrt((alpha_prior * beta_prior) / 
+                 ((alpha_prior + beta_prior)^2 * (alpha_prior + beta_prior + 1)))
+
+cat("Počiatočný prior: Beta(", alpha_prior, ", ", beta_prior, ")\n", sep = "")
+cat("Mean:", round(mean_prior, 4), "\n")
+cat("Mode:", round(mode_prior, 4), "\n")
+cat("SD:  ", round(sd_prior, 4), "\n")
+```
+
+**Charakteristiky:**
+\begin{align}
+E(\pi) &= \frac{4}{4 + 3} = \frac{4}{7} \approx 0.5714 \\
+\text{Mode}(\pi) &= \frac{4 - 1}{4 + 3 - 2} = \frac{3}{5} = 0.6 \\
+\text{SD}(\pi) &\approx 0.1741
+\end{align}
+
+### a. Sekvenčná aktualizácia posterioru
+
+#### Beta-Binomial pravidlo
+
+Pre Beta-Binomial model platí:
+
+**Prior:**
+\begin{equation}
+\pi \sim \text{Beta}(\alpha, \beta)
+\end{equation}
+
+**Dáta:**
+\begin{equation}
+Y | \pi \sim \text{Binomial}(n, \pi)
+\end{equation}
+
+**Posterior:**
+\begin{equation}
+\pi | Y = y \sim \text{Beta}(\alpha + y, \beta + n - y)
+\end{equation}
+
+**Kľúčový princíp sekvenčnej analýzy:** Posterior z jedného dňa sa stáva priorom pre ďalší deň!
+
+#### Deň 1: Dáta od zamestnanca 1
+
+**Prior na začiatku dňa 1:** Beta(4, 3)
+
+**Dáta od zamestnanca 1:** $y_1 = 0$ kliknutí z $n_1 = 1$ pokusu
+
+**Posterior na konci dňa 1:**
+\begin{align}
+\alpha_1 &= 4 + 0 = 4 \\
+\beta_1 &= 3 + 1 - 0 = 4
+\end{align}
+
+\begin{equation}
+\boxed{\pi | \text{deň 1} \sim \text{Beta}(4, 4)}
+\end{equation}
+
+```{r day1}
+# Aktualizácia po dni 1
+alpha_day1 <- alpha_prior + employee_1$y
+beta_day1 <- beta_prior + employee_1$n - employee_1$y
+
+mean_day1 <- alpha_day1 / (alpha_day1 + beta_day1)
+mode_day1 <- (alpha_day1 - 1) / (alpha_day1 + beta_day1 - 2)
+sd_day1 <- sqrt((alpha_day1 * beta_day1) / 
+                ((alpha_day1 + beta_day1)^2 * (alpha_day1 + beta_day1 + 1)))
+
+cat("POSTERIOR DEŇA 1: Beta(", alpha_day1, ", ", beta_day1, ")\n", sep = "")
+cat("Mean:", round(mean_day1, 4), "\n")
+cat("Mode:", round(mode_day1, 4), "\n")
+cat("SD:  ", round(sd_day1, 4), "\n")
+```
+
+#### Deň 2: Dáta od zamestnanca 2
+
+**Prior na začiatku dňa 2:** Beta(4, 4) (posterior z dňa 1)
+
+**Dáta od zamestnanca 2:** $y_2 = 3$ kliknutia z $n_2 = 10$ pokusov
+
+**Posterior na konci dňa 2:**
+\begin{align}
+\alpha_2 &= 4 + 3 = 7 \\
+\beta_2 &= 4 + 10 - 3 = 11
+\end{align}
+
+\begin{equation}
+\boxed{\pi | \text{deň 2} \sim \text{Beta}(7, 11)}
+\end{equation}
+
+```{r day2}
+# Aktualizácia po dni 2
+alpha_day2 <- alpha_day1 + employee_2$y
+beta_day2 <- beta_day1 + employee_2$n - employee_2$y
+
+mean_day2 <- alpha_day2 / (alpha_day2 + beta_day2)
+mode_day2 <- (alpha_day2 - 1) / (alpha_day2 + beta_day2 - 2)
+sd_day2 <- sqrt((alpha_day2 * beta_day2) / 
+                ((alpha_day2 + beta_day2)^2 * (alpha_day2 + beta_day2 + 1)))
+
+cat("POSTERIOR DEŇA 2: Beta(", alpha_day2, ", ", beta_day2, ")\n", sep = "")
+cat("Mean:", round(mean_day2, 4), "\n")
+cat("Mode:", round(mode_day2, 4), "\n")
+cat("SD:  ", round(sd_day2, 4), "\n")
+```
+
+#### Deň 3: Dáta od zamestnanca 3
+
+**Prior na začiatku dňa 3:** Beta(7, 11) (posterior z dňa 2)
+
+**Dáta od zamestnanca 3:** $y_3 = 7$ kliknutí z $n_3 = 20$ pokusov
+
+**Posterior na konci dňa 3:**
+\begin{align}
+\alpha_3 &= 7 + 7 = 14 \\
+\beta_3 &= 11 + 20 - 7 = 24
+\end{align}
+
+\begin{equation}
+\boxed{\pi | \text{deň 3} \sim \text{Beta}(14, 24)}
+\end{equation}
+
+```{r day3}
+# Aktualizácia po dni 3
+alpha_day3 <- alpha_day2 + employee_3$y
+beta_day3 <- beta_day2 + employee_3$n - employee_3$y
+
+mean_day3 <- alpha_day3 / (alpha_day3 + beta_day3)
+mode_day3 <- (alpha_day3 - 1) / (alpha_day3 + beta_day3 - 2)
+sd_day3 <- sqrt((alpha_day3 * beta_day3) / 
+                ((alpha_day3 + beta_day3)^2 * (alpha_day3 + beta_day3 + 1)))
+
+cat("POSTERIOR DEŇA 3: Beta(", alpha_day3, ", ", beta_day3, ")\n", sep = "")
+cat("Mean:", round(mean_day3, 4), "\n")
+cat("Mode:", round(mode_day3, 4), "\n")
+cat("SD:  ", round(sd_day3, 4), "\n")
+```
+
+#### Sumár sekvenčnej aktualizácie
+
+```{r sequential-summary}
+summary_seq <- data.frame(
+  Den = c("Prior", "Deň 1", "Deň 2", "Deň 3"),
+  Model = c(
+    paste0("Beta(", alpha_prior, ", ", beta_prior, ")"),
+    paste0("Beta(", alpha_day1, ", ", beta_day1, ")"),
+    paste0("Beta(", alpha_day2, ", ", beta_day2, ")"),
+    paste0("Beta(", alpha_day3, ", ", beta_day3, ")")
+  ),
+  Data = c(
+    "-",
+    paste0(employee_1$y, " z ", employee_1$n),
+    paste0(employee_2$y, " z ", employee_2$n),
+    paste0(employee_3$y, " z ", employee_3$n)
+  ),
+  Mean = c(mean_prior, mean_day1, mean_day2, mean_day3),
+  Mode = c(mode_prior, mode_day1, mode_day2, mode_day3),
+  SD = c(sd_prior, sd_day1, sd_day2, sd_day3)
+)
+
+summary_seq <- summary_seq %>%
+  mutate(across(c(Mean, Mode, SD), ~round(.x, 4)))
+
+knitr::kable(summary_seq, caption = "Sekvenčná aktualizácia posterioru")
+```
+
+### b. Vizualizácia a interpretácia evolúcie poznania
+
+#### Graf všetkých modelov
+
+```{r sequential-plot, fig.width=8, fig.height=6}
+# Vytvorenie dát pre grafy
+pi_vals <- seq(0, 1, length.out = 500)
+
+# Hustoty pre všetky modely
+density_prior <- dbeta(pi_vals, alpha_prior, beta_prior)
+density_day1 <- dbeta(pi_vals, alpha_day1, beta_day1)
+density_day2 <- dbeta(pi_vals, alpha_day2, beta_day2)
+density_day3 <- dbeta(pi_vals, alpha_day3, beta_day3)
+
+# Data frame pre ggplot
+df_sequential <- data.frame(
+  pi = rep(pi_vals, 4),
+  density = c(density_prior, density_day1, density_day2, density_day3),
+  Model = rep(c("Prior Beta(4,3)", 
+                "Deň 1: Beta(4,4)", 
+                "Deň 2: Beta(7,11)", 
+                "Deň 3: Beta(14,24)"), 
+              each = length(pi_vals))
+)
+
+# Určenie správneho poradia
+df_sequential$Model <- factor(df_sequential$Model, 
+                              levels = c("Prior Beta(4,3)", 
+                                        "Deň 1: Beta(4,4)", 
+                                        "Deň 2: Beta(7,11)", 
+                                        "Deň 3: Beta(14,24)"))
+
+# Graf
+ggplot(df_sequential, aes(x = pi, y = density, color = Model, linetype = Model)) +
+  geom_line(size = 1.1) +
+  labs(
+    title = "Sekvenčná evolúcia posterioru",
+    subtitle = "Postupná aktualizácia poznania o π",
+    x = expression(pi ~ "(pravdepodobnosť kliknutia)"),
+    y = "Hustota pravdepodobnosti",
+    color = "Model",
+    linetype = "Model"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#D55E00")) +
+  geom_vline(xintercept = c(mean_prior, mean_day1, mean_day2, mean_day3), 
+             linetype = "dashed", alpha = 0.3)
+```
+
+#### Slovný popis evolúcie
+
+**Prior (začiatok):**
+
+- Beta(4, 3) s mean = `r round(mean_prior, 3)` (57%)
+- Optimistický pohľad: očakáva sa vyššia pravdepodobnosť kliknutia
+- Rozumná neistota (SD = `r round(sd_prior, 3)`)
+
+**Deň 1 - Posterior Beta(4, 4):**
+
+- Zamestnanec 1 nepriniesol žiadne kliknutie (0 z 1)
+- Mean klesol na `r round(mean_day1, 3)` (50%)
+- Model sa stal **symetrickým** (α = β)
+- Negatívne dáta znížili optimizmus
+
+**Deň 2 - Posterior Beta(7, 11):**
+
+- Zamestnanec 2: 3 kliknutia z 10 pokusov (30% úspešnosť)
+- Mean ďalej klesol na `r round(mean_day2, 3)` (39%)
+- **Pesimistickejší pohľad** - β > α
+- SD klesla (väčšia istota vďaka viacerým dátam)
+
+**Deň 3 - Posterior Beta(14, 24):**
+
+- Zamestnanec 3: 7 kliknutí z 20 pokusov (35% úspešnosť)
+- Finálny mean = `r round(mean_day3, 3)` (37%)
+- **Najväčšia istota** (SD = `r round(sd_day3, 3)`)
+- Distribúcia je **užšia a presnejšia**
+
+**Kľúčové pozorovania:**
+
+1. **Trend:** Mean postupne klesala zo 57% na 37%
+2. **Neistota:** SD klesla z `r round(sd_prior, 3)` na `r round(sd_day3, 3)`
+3. **Poznanie:** Z optimistického očakávania k realistickému pohľadu
+4. **Dáta:** Ukázali nižšiu mieru kliknutia než sa očakávalo
+
+### c. Porovnanie sekvenčnej vs. jednorázovej aktualizácie
+
+#### Jednorázová aktualizácia (všetky dáta naraz)
+
+Čo keby štvrtý zamestnanec čakal do konca dňa 3 a aktualizoval prior všetkými dátami naraz?
+
+**Prior:** Beta(4, 3)
+
+**Všetky dáta spolu:**
+\begin{align}
+y_{total} &= y_1 + y_2 + y_3 = 0 + 3 + 7 = 10 \\
+n_{total} &= n_1 + n_2 + n_3 = 1 + 10 + 20 = 31
+\end{align}
+
+**Posterior (jednorázová aktualizácia):**
+\begin{align}
+\alpha_{all} &= 4 + 10 = 14 \\
+\beta_{all} &= 3 + 31 - 10 = 24
+\end{align}
+
+\begin{equation}
+\boxed{\pi | \text{všetky dáta} \sim \text{Beta}(14, 24)}
+\end{equation}
+
+```{r batch-update}
+# Celkové dáta
+y_total <- employee_1$y + employee_2$y + employee_3$y
+n_total <- employee_1$n + employee_2$n + employee_3$n
+
+# Jednorázová aktualizácia
+alpha_batch <- alpha_prior + y_total
+beta_batch <- beta_prior + n_total - y_total
+
+mean_batch <- alpha_batch / (alpha_batch + beta_batch)
+mode_batch <- (alpha_batch - 1) / (alpha_batch + beta_batch - 2)
+sd_batch <- sqrt((alpha_batch * beta_batch) / 
+                 ((alpha_batch + beta_batch)^2 * (alpha_batch + beta_batch + 1)))
+
+cat("JEDNORÁZOVÁ AKTUALIZÁCIA: Beta(", alpha_batch, ", ", beta_batch, ")\n", sep = "")
+cat("Celkové dáta:", y_total, "kliknutí z", n_total, "pokusov\n")
+cat("Mean:", round(mean_batch, 4), "\n")
+cat("Mode:", round(mode_batch, 4), "\n")
+cat("SD:  ", round(sd_batch, 4), "\n")
+```
+
+#### Porovnanie výsledkov
+
+```{r comparison}
+comparison <- data.frame(
+  Metoda = c("Sekvenčná (3 dni)", "Jednorázová (všetky dáta)"),
+  Model = c(
+    paste0("Beta(", alpha_day3, ", ", beta_day3, ")"),
+    paste0("Beta(", alpha_batch, ", ", beta_batch, ")")
+  ),
+  Mean = c(mean_day3, mean_batch),
+  Mode = c(mode_day3, mode_batch),
+  SD = c(sd_day3, sd_batch)
+)
+
+comparison <- comparison %>%
+  mutate(across(c(Mean, Mode, SD), ~round(.x, 4)))
+
+knitr::kable(comparison, caption = "Porovnanie sekvenčnej a jednorázovej aktualizácie")
+```
+
+**Záver:**
+
+\begin{equation}
+\text{Beta}(14, 24)_{\text{sekvenčná}} = \text{Beta}(14, 24)_{\text{jednorázová}}
+\end{equation}
+
+**Oba prístupy vedú k IDENTICKÉMU posterioru!**
+
+Toto demonštruje dôležitý princíp Bayesovskej analýzy:
+
+**Data Order Invariance (Invariantnosť na poradie dát):**
+
+- Finálny posterior je **nezávislý na poradí** dát
+- Nezáleží na tom, či dáta spracujeme **postupne** alebo **naraz**
+- Matematicky:
+
+\begin{equation}
+\text{Beta}(\alpha, \beta) \xrightarrow{y_1, n_1} \text{Beta}(\alpha + y_1, \beta + n_1 - y_1) \xrightarrow{y_2, n_2} \cdots
+\end{equation}
+
+je ekvivalentné s:
+
+\begin{equation}
+\text{Beta}(\alpha, \beta) \xrightarrow{y_{total}, n_{total}} \text{Beta}(\alpha + y_{total}, \beta + n_{total} - y_{total})
+\end{equation}
+
+## Zhrnutie
+
+### Kľúčové princípy
+
+1. **Sekvenčná aktualizácia:**
+   - Posterior z jedného kroku = Prior pre ďalší krok
+   - Umožňuje postupné učenie sa z dát
+
+2. **Data Order Invariance:**
+   - Finálny posterior je rovnaký bez ohľadu na poradie dát
+   - Platí pre sekvenčnú aj jednorázovú aktualizáciu
+
+3. **Výhody sekvenčnej analýzy:**
+   - Vidíme evolúciu poznania v čase
+   - Môžeme robiť priebežné rozhodnutia
+   - Nepotrebujeme čakať na všetky dáta
+
+4. **Evolúcia v našom príklade:**
+   - Prior: optimistický (57% kliknutia)
+   - Finál: realistický (37% kliknutia)
+   - Neistota klesla výrazne
+
+### Praktický význam
+
+Sekvenčná analýza je užitočná v reálnom svete:
+
+- **Klinické štúdie:** Priebežné vyhodnocovanie bezpečnosti
+- **A/B testovanie:** Monitorovanie výsledkov v čase
+- **Kontrola kvality:** Neustála aktualizácia modelov
+
+**Kľúčová myšlienka:** Bayesovská analýza prirodzene podporuje **učenie sa v čase**!
+

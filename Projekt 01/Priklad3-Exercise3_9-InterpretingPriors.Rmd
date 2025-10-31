@@ -1,0 +1,330 @@
+---
+title: "Exercise 3.9 - Interpreting Priors"
+subtitle: "Porovnanie Beta priorov pre rôzne regióny USA"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+
+## Úvod
+
+Riešenie cvičenia 3.9 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-3#exercises-2) 
+
+Interpretácia a porovnanie Beta apriórnych modelov pre proporciu obyvateľov USA, ktorí používajú výraz "pop" pre sladené nápoje.
+
+```{r libraries, echo=FALSE}
+library(bayesrules)
+library(ggplot2)
+library(dplyr)
+```
+
+## Exercise 3.9: Interpreting Priors
+
+> What do you call a sweet carbonated drink: pop, soda, coke, or something else? Let $\pi$ be the proportion of U.S. residents that prefer the term "pop." Two different beverage salespeople from different regions of the country have different priors for $\pi$. The first salesperson works in North Dakota and specifies a Beta(8,2) prior. The second works in Louisiana and specifies a Beta(1,20) prior.
+>
+> a. Calculate the prior mean, mode, standard deviation of $\pi$ for both salespeople.
+>
+> b. Plot the prior pdfs for both salespeople.
+>
+> c. Compare, in words, the salespeople's prior understandings about the proportion of U.S. residents that say "pop."
+
+## Zadanie úlohy
+
+### Kontext
+
+**Parameter záujmu:** $\pi$ = proporcia obyvateľov USA, ktorí používajú výraz "pop" pre sladené nápoje
+
+**Dvaja predajcovia z rôznych regiónov:**
+
+1. **Predajca z North Dakota (ND):** má apriórny model $\pi \sim \text{Beta}(8, 2)$
+2. **Predajca z Louisiana (LA):** má apriórny model $\pi \sim \text{Beta}(1, 20)$
+
+## Solution
+
+### a. Výpočet charakteristík apriórnych modelov
+
+#### Vzorce pre Beta rozdelenie
+
+Pre $\pi \sim \text{Beta}(\alpha, \beta)$ platí:
+
+\begin{align}
+E(\pi) &= \frac{\alpha}{\alpha + \beta} \\
+\text{Mode}(\pi) &= \frac{\alpha - 1}{\alpha + \beta - 2} \quad \text{pre } \alpha, \beta > 1 \\
+\text{Var}(\pi) &= \frac{\alpha \beta}{(\alpha + \beta)^2(\alpha + \beta + 1)} \\
+\text{SD}(\pi) &= \sqrt{\text{Var}(\pi)}
+\end{align}
+
+#### Predajca z North Dakota: Beta(8, 2)
+
+```{r nd-prior}
+# Parametre pre North Dakota
+alpha_nd <- 8
+beta_nd <- 2
+
+# Výpočet charakteristík
+mean_nd <- alpha_nd / (alpha_nd + beta_nd)
+mode_nd <- (alpha_nd - 1) / (alpha_nd + beta_nd - 2)
+var_nd <- (alpha_nd * beta_nd) / ((alpha_nd + beta_nd)^2 * (alpha_nd + beta_nd + 1))
+sd_nd <- sqrt(var_nd)
+
+cat("North Dakota - Beta(8, 2):\n")
+cat("Stredná hodnota (mean):", round(mean_nd, 4), "\n")
+cat("Modus (mode):", round(mode_nd, 4), "\n")
+cat("Rozptyl (variance):", round(var_nd, 4), "\n")
+cat("Smerodajná odchýlka (SD):", round(sd_nd, 4), "\n")
+```
+
+**Výpočet pomocou vzorcov:**
+
+\begin{align}
+E(\pi) &= \frac{8}{8 + 2} = \frac{8}{10} = 0.8 \\
+\text{Mode}(\pi) &= \frac{8 - 1}{8 + 2 - 2} = \frac{7}{8} = 0.875 \\
+\text{Var}(\pi) &= \frac{8 \times 2}{10^2 \times 11} = \frac{16}{1100} \approx 0.0145 \\
+\text{SD}(\pi) &= \sqrt{0.0145} \approx 0.1205
+\end{align}
+
+#### Predajca z Louisiana: Beta(1, 20)
+
+```{r la-prior}
+# Parametre pre Louisiana
+alpha_la <- 1
+beta_la <- 20
+
+# Výpočet charakteristík
+mean_la <- alpha_la / (alpha_la + beta_la)
+# Mode nie je definovaný pre alpha = 1, beta > 1 (klesajúca funkcia)
+mode_la <- ifelse(alpha_la > 1 & beta_la > 1, 
+                  (alpha_la - 1) / (alpha_la + beta_la - 2), 
+                  NA)
+var_la <- (alpha_la * beta_la) / ((alpha_la + beta_la)^2 * (alpha_la + beta_la + 1))
+sd_la <- sqrt(var_la)
+
+cat("Louisiana - Beta(1, 20):\n")
+cat("Stredná hodnota (mean):", round(mean_la, 4), "\n")
+cat("Modus (mode):", ifelse(is.na(mode_la), "neexistuje (klesajúca funkcia)", round(mode_la, 4)), "\n")
+cat("Rozptyl (variance):", round(var_la, 4), "\n")
+cat("Smerodajná odchýlka (SD):", round(sd_la, 4), "\n")
+```
+
+**Výpočet pomocou vzorcov:**
+
+\begin{align}
+E(\pi) &= \frac{1}{1 + 20} = \frac{1}{21} \approx 0.0476 \\
+\text{Mode}(\pi) &= \text{neexistuje (pre } \alpha = 1, \beta > 1 \text{ je funkcia klesajúca)} \\
+\text{Var}(\pi) &= \frac{1 \times 20}{21^2 \times 22} = \frac{20}{9702} \approx 0.0021 \\
+\text{SD}(\pi) &= \sqrt{0.0021} \approx 0.0453
+\end{align}
+
+#### Porovnanie charakteristík
+
+```{r comparison-table}
+comparison <- data.frame(
+  Predajca = c("North Dakota", "Louisiana"),
+  Prior = c("Beta(8, 2)", "Beta(1, 20)"),
+  Mean = c(mean_nd, mean_la),
+  Mode = c(mode_nd, 0),
+  SD = c(sd_nd, sd_la),
+  Variance = c(var_nd, var_la)
+)
+
+comparison <- comparison %>%
+  mutate(across(c(Mean, Mode, SD, Variance), ~round(.x, 4)))
+
+knitr::kable(comparison, caption = "Porovnanie apriórnych modelov")
+```
+
+### b. Graf apriórnych hustôt pravdepodobnosti (pdf)
+
+#### Porovnanie oboch priorov na jednom grafe
+
+```{r prior-comparison, fig.width=8, fig.height=5}
+# Vytvorenie dát pre grafy
+pi_vals <- seq(0, 1, length.out = 500)
+
+# Husty pre oba priory
+density_nd <- dbeta(pi_vals, alpha_nd, beta_nd)
+density_la <- dbeta(pi_vals, alpha_la, beta_la)
+
+# Vytvorenie data frame pre ggplot
+df_priors <- data.frame(
+  pi = rep(pi_vals, 2),
+  density = c(density_nd, density_la),
+  Region = rep(c("North Dakota - Beta(8,2)", "Louisiana - Beta(1,20)"), 
+               each = length(pi_vals))
+)
+
+# Graf oboch priorov
+ggplot(df_priors, aes(x = pi, y = density, color = Region, linetype = Region)) +
+  geom_line(size = 1.2) +
+  labs(
+    title = "Porovnanie apriórnych Beta modelov",
+    x = expression(pi ~ "(proporcia ľudí používajúcich 'pop')"),
+    y = "Hustota pravdepodobnosti",
+    color = "Predajca",
+    linetype = "Predajca"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("North Dakota - Beta(8,2)" = "#1f77b4", 
+                                  "Louisiana - Beta(1,20)" = "#ff7f0e")) +
+  geom_vline(xintercept = mean_nd, color = "#1f77b4", linetype = "dashed", alpha = 0.5) +
+  geom_vline(xintercept = mean_la, color = "#ff7f0e", linetype = "dashed", alpha = 0.5) +
+  annotate("text", x = mean_nd + 0.08, y = max(density_nd) * 0.8, 
+           label = paste0("Mean ND = ", round(mean_nd, 2)), 
+           color = "#1f77b4", size = 3.5) +
+  annotate("text", x = mean_la + 0.08, y = max(density_la) * 0.8, 
+           label = paste0("Mean LA = ", round(mean_la, 2)), 
+           color = "#ff7f0e", size = 3.5)
+```
+
+#### Samostatný graf pre North Dakota
+
+```{r nd-plot, fig.width=7, fig.height=4}
+plot_beta(alpha = alpha_nd, beta = beta_nd, mean = TRUE, mode = TRUE) +
+  labs(title = "North Dakota - Beta(8, 2)",
+       subtitle = paste0("Mean = ", round(mean_nd, 3), ", Mode = ", round(mode_nd, 3), 
+                        ", SD = ", round(sd_nd, 3)))
+```
+
+#### Samostatný graf pre Louisiana
+
+```{r la-plot, fig.width=7, fig.height=4}
+plot_beta(alpha = alpha_la, beta = beta_la, mean = TRUE, mode = FALSE) +
+  labs(title = "Louisiana - Beta(1, 20)",
+       subtitle = paste0("Mean = ", round(mean_la, 3), ", SD = ", round(sd_la, 3),
+                        " (modus neexistuje)"))
+```
+
+### c. Porovnanie a interpretácia apriórnych modelov
+
+#### 1. Poloha (centrálna tendencia)
+
+**North Dakota - Beta(8, 2):**
+
+- Stredná hodnota: $E(\pi) = 0.80$ (80%)
+- Modus: $\text{Mode}(\pi) = 0.875$ (87.5%)
+- Predajca z North Dakota **silno verí**, že väčšina (približne 80%) obyvateľov USA používa výraz "pop"
+
+**Louisiana - Beta(1, 20):**
+
+- Stredná hodnota: $E(\pi) = 0.048$ (4.8%)
+- Distribúcia je klesajúca (maximum pri $\pi = 0$)
+- Predajca z Louisiana **silno verí**, že len veľmi malá časť (približne 5%) obyvateľov USA používa výraz "pop"
+
+**Záver o polohe:** Oba predajcovia majú **diametrálne odlišné** presvedčenia! North Dakota verí, že "pop" je veľmi populárne, zatiaľ čo Louisiana verí opak.
+
+#### 2. Variabilita (neistota)
+
+**North Dakota - Beta(8, 2):**
+
+- Smerodajná odchýlka: $\text{SD}(\pi) = 0.121$ (12.1%)
+- Celkový počet "pozorovaní": $\alpha + \beta = 10$
+- Stredná až vysoká neistota
+
+**Louisiana - Beta(1, 20):**
+
+- Smerodajná odchýlka: $\text{SD}(\pi) = 0.045$ (4.5%)
+- Celkový počet "pozorovaní": $\alpha + \beta = 21$
+- Nižšia neistota (viac "istý" vo svojom presvedčení)
+
+**Záver o variabilite:** Predajca z Louisiana je **istejší** vo svojom presvedčení (menšia SD), aj keď má iný názor. North Dakota má vyššiu neistotu.
+
+#### 3. Tvar distribúcie
+
+**North Dakota - Beta(8, 2):**
+
+- $\alpha > \beta$ → distribúcia je **zošikmená doľava** (left-skewed)
+- Väčšina pravdepodobnostnej masy je pri **vysokých hodnotách** $\pi$
+- Maximum pri $\pi \approx 0.875$
+
+**Louisiana - Beta(1, 20):**
+
+- $\alpha < \beta$ a $\alpha = 1$ → distribúcia je **silno zošikmená doprava** (right-skewed)
+- Väčšina pravdepodobnostnej masy je pri **nízkych hodnotách** $\pi$
+- Funkcia klesá od $\pi = 0$ smerom doprava
+
+#### 4. Regionálny kontext
+
+**Prečo takéto rozdiely?**
+
+Tieto apriórne modely odrážajú **regionálne rozdiely v USA**:
+
+- **North Dakota** (Stredný západ/Sever USA): V tejto oblasti je výraz "pop" skutočne veľmi bežný
+- **Louisiana** (Juh USA): V južných štátoch sa typicky používa "coke" alebo "soda", nie "pop"
+
+Každý predajca má apriórny model založený na **svojej lokálnej skúsenosti**, ale úloha je o proporcii v **celých USA**, nie len v ich regióne!
+
+## Zhrnutie
+
+### Kľúčové rozdiely
+
+| Charakteristika | North Dakota Beta(8,2) | Louisiana Beta(1,20) |
+|----------------|------------------------|----------------------|
+| Stredná hodnota | 0.80 (80%) | 0.048 (4.8%) |
+| Modus | 0.875 (87.5%) | neexistuje (klesá) |
+| Smer. odchýlka | 0.121 (12.1%) | 0.045 (4.5%) |
+| Presvedčenie | "pop" je populárne | "pop" je zriedkavé |
+| Neistota | stredná | nízka |
+| Tvar | zošikmené doľava | zošikmené doprava |
+
+### Interpretácia
+
+1. **Diametrálne rozdielne presvedčenia:** Jeden predajca verí, že takmer všetci hovoria "pop", druhý verí, že takmer nikto
+
+2. **Regionálne skúsenosti:** Oba priory odrážajú lokálne skúsenosti predajcov, nie celonárodnú realitu
+
+3. **Rôzna istota:** Louisiana je istejší (menšia SD), North Dakota má väčšiu variabilitu
+
+4. **Dôležitosť dát:** S takto odlišnými priormi bude zaujímavé vidieť, ako sa posteriorné modely zmenia po pozorovaní skutočných celonárodných dát!
+
+## Poznámky k Beta rozdeleniu
+
+### Interpretácia parametrov $\alpha$ a $\beta$
+
+Beta($\alpha, \beta$) môžeme interpretovať ako:
+
+- $\alpha - 1$ = počet "úspechov" (ľudia, ktorí hovoria "pop")
+- $\beta - 1$ = počet "neúspechov" (ľudia, ktorí nehovoria "pop")
+- $\alpha + \beta$ = celková "sila" prioru (ekvivalentný počet pozorovaní)
+
+**North Dakota Beta(8, 2):**
+
+- Ako keby videl 7 úspechov a 1 neúspech
+- Celková sila: 10 pozorovaní
+
+**Louisiana Beta(1, 20):**
+
+- Ako keby videl 0 úspechov a 19 neúspechov
+- Celková sila: 21 pozorovaní
+- Je istejší (viac "pozorovaní")
+
+### Vizualizácia s R funkciou
+
+```{r bayesrules-summary}
+# Použitie funkcie z bayesrules balíka
+cat("=== North Dakota ===\n")
+summarize_beta(alpha = alpha_nd, beta = beta_nd)
+
+cat("\n=== Louisiana ===\n")
+summarize_beta(alpha = alpha_la, beta = beta_la)
+```
+
+## Záver
+
+Cvičenie demonštruje, ako môžu rôzni ľudia (v tomto prípade z rôznych regiónov) mať **úplne odlišné apriórne presvedčenia** o tom istom parametri $\pi$. 
+
+Kľúčové ponaučenia:
+
+- Prior odráža naše počiatočné presvedčenie pred videním dát
+- Prior môže byť ovplyvnený našimi lokálnymi skúsenosťami
+- Beta rozdelenie je flexibilné a môže zachytiť veľmi rôzne typy presvedčení
+- V Bayesovskej analýze začneme s priorom a aktualizujeme ho dátami na posterior
