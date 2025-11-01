@@ -1,0 +1,120 @@
+---
+title: "Practice: Normal-Normal simulation"
+subtitle: "Exercise 7.9 (One iteration with a Uniform proposal model) "
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 8, fig.height = 5)
+```
+
+## Úvod
+
+Tento dokument obsahuje riešenie cvičení 7.9 - 7.13 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-7#exercises-6) <br>
+Metropolis-Hastings Simulácia posteriórneho Normal-Normal modelu
+
+**Zdroj:**
+
+- [Bayes Rules!](https://www.bayesrulesbook.com/chapter-7#exercises-6)
+
+```{r libraries, echo =FALSE}
+library(tidyverse)
+library(kableExtra)
+#library(bayesrules)
+#library(janitor)
+```
+
+
+## Practice: Normal-Normal simulation
+### Exercise 7.9 (One iteration with a Uniform proposal model)
+> In the next set of exercises, return to the Bayesian model setting:
+\begin{split}
+Y|\mu & \sim \text{N}(\mu, 0.75^2) \\
+\mu   & \sim \text{N}(0, 1^2).  \\
+\end{split}
+
+> Assume we observe  $Y = 6.25$ and wish to construct a Metropolis-Hastings simulation of the corresponding posterior model for $\lambda$. The function `one_mh_iteration()` from the text utilizes a Uniform proposal model, $\mu′|\mu ∼ Unif(\mu − w, \mu + w)$ with half-width w = 1. Starting from a current value of $\mu$ = 3 and using `set.seed(1)`, run the code below and comment on the returned proposal, alpha, and next_stop values.<br>
+> a. `one_mh_iteration(w = 0.01, current = 3)` <br>
+> b. `one_mh_iteration(w = 0.5, current = 3)` <br>
+> c. `one_mh_iteration(w = 1, current = 3)` <br>
+> d. `one_mh_iteration(w = 3, current = 3)` <br>
+
+### Riešenie:
+
+Jeden krok Metropolis-Hastings algoritmu predstavuje navrhnutie ďalšej hodnoty v iterácii. Túto hodnotu vyberáme z kandidátskej hustoty. V tomto príklade je kandidátskou hustotou uniformné rozdelenie so šírkou $2w$ a stredom v pôvodnej lokácii. 
+
+#### Jedna iterácia Metropolis-Hastings algoritmu
+
+```{r one-mh-iteration}
+
+# One iteration of M-H process
+
+one_mh_iteration <- function(w, current){
+ # STEP 1: Propose the next chain location
+ proposal <- runif(1, min = current - w, max = current + w)
+  
+ # STEP 2: Decide whether or not to go there
+ proposal_plaus <- dnorm(proposal, 0, 1) * dnorm(6.25, proposal, 0.75)
+ current_plaus  <- dnorm(current, 0, 1) * dnorm(6.25, current, 0.75)
+ alpha <- min(1, proposal_plaus / current_plaus)
+ next_stop <- sample(c(proposal, current), 
+                     size = 1, prob = c(alpha, 1-alpha))
+  
+ # Return the results
+ return(data.frame(proposal, alpha, next_stop))
+}
+```
+
+#### Otestovanie rôznych hodnôt pre šírku uniformného rozdelenia
+```{r settings-w, echo = FALSE}
+set.seed(1)
+
+output <- rbind(
+    cbind('w' = 0.01, 'current' = 3),
+    cbind('w' = 0.5, 'current' = 3),
+    cbind('w' = 1, 'current' = 3),
+    cbind('w' = 3, 'current' = 3)
+  )
+  
+kable(output,
+      caption = "Settings for one iteration",
+      align = 'c',
+      digits = 3
+      ) %>%
+      kable_styling(full_width = FALSE)
+```
+
+
+```{r one-iteration-various-w}
+
+set.seed(1)
+
+output <- rbind(
+    cbind('w' = 0.01, 'current' = 3, one_mh_iteration(w = 0.01, current = 3)),
+    cbind('w' = 0.5, 'current' = 3, one_mh_iteration(w = 0.5, current = 3)),
+    cbind('w' = 1, 'current' = 3, one_mh_iteration(w = 1, current = 3)),
+    cbind('w' = 3, 'current' = 3, one_mh_iteration(w = 3, current = 3))
+  )
+```
+
+``` {r one-iteration-various-w-kable, echo = FALSE}
+kable(output,
+      caption = "Comparison of proposal and next stop based on parameter w",
+      align = 'c',
+      digits = 3
+      ) %>%
+      kable_styling(full_width = FALSE)
+```
+- Ak si nastavím set.seed(1), tak pre $w = 0.01$ máme nasledujúci návrh kroku `r round(output$proposal[1], 3)` veľmi blízko pôvodného kroku, maximálne do 0.01. Jeho akceptačnú pravdepodobnosť `r round(output$alpha[1], 3)`. 
+- Pre $w = 0.5$ je ďalší návrh `r round(output$proposal[2], 3)` a určite bude akceptovaný, keďže jeho pravdepodobnosť je 1.
+- Pre šírku $w = 1$ je ďalší navrhovaný krok `r round(output$alpha[3], 3)` viac vzdialený od pôvodnej hodnoty 3, jeho akceptačná pravdepodobnosť je pomerne nízka `r round(output$alpha[3], 3)`, ale aj napriek tomu je táto hodnota akceptovaná pre ďalší krok.
+- Pre šírku $w = 3$ je ďalší navrhovaný krok `r round(output$alpha[4], 3)` už veľmi vzdialený od pôvodnej hodnoty 3, jeho akceptačná pravdepodobnosť je veľmi nízka `r round(output$alpha[4], 4)`, no táto hodnota nie je akceptovaná. V ďalšom kroku teda zostáva na pôvodnej hodnote.
+
+
