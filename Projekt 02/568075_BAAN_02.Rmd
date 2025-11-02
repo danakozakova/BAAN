@@ -1,0 +1,492 @@
+---
+title: "Předmět: MPE _BAAN Bayesiánska analýza"
+subtitle: "Druhý úkol"
+authors: "TBD"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(dplyr)
+library(bayesrules)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+```
+
+# Exercise 7.15 (Using your own data: Beta-Binomial Metropolis-Hastings)
+Riešenie cvičenia 7.15 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-7#exercises-6) 
+
+> In this section you will apply your new simulation skills to answer your own research question using your own data! In each case, identify a question for which data collection takes fewer than 5 minutes of effort. (That part is supposed to be fun, not overwhelming.) <br>
+a. Identify a question that could be answered with a Beta-Binomial model for $\pi$, some probability or proportion of interest. Consider scenarios for which data collection would be easy, such as the proportion of emails that you reply to within 24 hours, the proportion of phone calls that you answer, etc. <br>
+b. Tune and describe a Beta prior model for $\pi$. <br>
+c. Collect and record your data here.<br>
+d. Below you will simulate the posterior model of $\pi$ using a Metropolis-Hastings algorithm. What is a reasonable proposal model to use in this algorithm? Explain. <br>
+e. Simulate a tour of 2000 $\pi$ values. Tune your proposal model until you are satisfied and construct the resulting trace plot. <br>
+f. Plot a histogram of your tour, and comment on the posterior model approximation within the context of your question.
+
+
+## Riešenie:
+V úlohe budeme odhadovať, aký je podiel dní, keď prekonáme "odporúčaných" 10 000 krokov. Pre odhad apriórneho modelu sme zvolili dáta za niekoľko mesiacov v tomto roku:
+
+### a. - b. Nastavenie apriórneho modelu
+```{r fist-estimation, echo = FALSE}
+over <- c(4, 3, 16, 11, 9, 7)
+all <- c(30, 12, 31, 31, 30, 31)
+first_data <- cbind(over, all) 
+colnames(first_data) <- c("Days over 10 000", "Number of days")
+
+kable(first_data, 
+      caption = "Zistenia z predchadzajucich mesiacov:",
+      align = "c") %>%
+  kable_styling(full_width = FALSE)
+
+```
+Celkovo sme sledovali `r sum(all)` dní. A v `r sum(over)` bolo prekonaných 10 000 krokov. Potrebujeme nastaviť Beta rozdelenie. Automaticky sa ponúka Beta(`r sum(over)`, `r sum(all)` - `r sum(over)` = `r sum(all) - sum(over)`). Avšak parametre sú vysoké, takže prior bude mať veľmi veľkú váhu oproti dátam. Ako prior nastavíme Beta rozdelenie s rovnakou strednou hodnotou, ale s nižšími parametrami: Beta(5, 11.5)
+
+#### Porovnanie Beta rozdelenia
+```{r prior-comparison, echo = FALSE}
+
+library(gridExtra)
+plot1 <- plot_beta(alpha = 50, beta = 115, mean = TRUE, mode = TRUE) +
+  labs(title = "Beta(50, 115)")
+plot2 <- plot_beta(alpha = 5, beta = 11.5, mean = TRUE, mode = TRUE) +
+  labs(title = "Beta(5, 11.5)")
+grid.arrange(plot1, plot2, ncol = 2)
+
+cbind(model = c("Beta(50, 115)", "Beta(5, 11.5)"),
+      rbind(summarize_beta(50, 115),
+            summarize_beta(5, 11.5)) |> round(3)
+      ) |> kable(caption = "Charakteristiky dvoch beta modelov",
+                 align = "c") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+#### Náš apriórny model:
+```{r prior-model, echo = FALSE}
+# Počiatočné hyperparametre
+alpha_prior <- 5
+beta_prior <- 11.5
+
+# Charakteristiky prioru
+mean_prior <- alpha_prior / (alpha_prior + beta_prior)
+mode_prior <- (alpha_prior - 1) / (alpha_prior + beta_prior - 2)
+sd_prior <- sqrt((alpha_prior * beta_prior) / 
+                 ((alpha_prior + beta_prior)^2 * (alpha_prior + beta_prior + 1)))
+```
+
+**Prior:**
+\begin{equation}
+\pi \sim \text{Beta}(`r alpha_prior`, `r beta_prior`)
+\end{equation}
+
+### c. Data
+V posledných troch dňoch sme prekročili 10 000 krokov dvakrát. Teda
+\begin{equation}
+n = 3 \\
+y = 2
+\end{equation}
+```{r data, echo = FALSE}
+n <- 3
+y <- 2
+```
+
+**Dáta:**
+\begin{equation}
+Y | \pi \sim \text{Bi}(n = `r n`, \pi)
+\end{equation}
+
+### d. Simulácia posterior modelu
+
+Tento posterior model vieme vyjadriť aj analyticky, je to Beta-binomické rozdelenie
+**Posterior:**
+\begin{equation}
+\pi | Y = y \sim \text{Beta}(\alpha + y, \beta + n - y)
+\end{equation}
+
+#### Výpočet posterioru
+
+Máme:
+- Prior: Beta(`r alpha_prior`, `r beta_prior`)
+- Dáta: $y = `r y`$ dní s viac ako 10 tisíc krokmi z $n = 3$ dní
+
+```{r posterior-calculation, echo = FALSE}
+# Posteriórne parametre
+alpha_post <- alpha_prior + y
+beta_post <- beta_prior + n - y
+```
+**Posterior:**
+\begin{align}
+\alpha_{post} &= `r alpha_prior` + `r y` = `r alpha_prior + y`\\
+\beta_{post} &= `r beta_prior` + `r n` - `r y` = `r beta_prior + n - y`
+\end{align}
+
+**Posteriórny model:**
+\begin{split}
+Y|\pi & \sim \text{Bin}(`r n`, \pi) \\
+\pi   & \sim \text{Beta}(`r alpha_prior`, `r beta_prior`) \;\; \Rightarrow \;\; 
+\pi | (Y = `r y`) \sim \text{Beta}(`r alpha_post`, `r beta_post`)
+\end{split} 
+
+Pre výber kandidátskeho rozdelenia môžeme použiť Normálne rozdelenie alebo rovnomerné rozdelenie:
+- rovnomerné rozdelenie - to je symetrické okolo aktuálnej hodnoty, tuning cez polovičnú šírku intervalu
+- normálne rozdelenie - tiež symetrické, tuning cez odchýlku
+- prípadne cez beta rozdelenie
+Budeme to simulovať s pomocou normálneho rozdelenia, ktoré je trochu flexibilnejšie ako rovnomerné. 
+
+\begin{equation}
+\pi' | \pi \; \sim \; N(\pi, s^2)
+\end{equation}
+
+V jednom kroku simulácie budeme porovnávať vierohodnosť aktuálneho a navrhnutého parametra využitím vzťahu pre nenormalizovanú aposteriórnu hustotu:
+\begin{equation}
+f(\pi | y = `r y`) \propto f(\pi) L(\pi | y = `r y`),
+\end{equation}
+
+pričom $f(\pi)$ je apriórne rozdelenie $Beta(`r alpha_prior`, `r beta_prior`)$ a <br>
+$L(\pi | y = `r y`)$ je vierohodnostná funkcia s rozdelením  $Bin(`r n`, \pi)$.
+
+
+```{r one-mh-normal, echo = FALSE}
+# One iteration or M-H process with normal density
+
+one_mh_iteration_normal <- function(s, current){
+  # STEP 1: Propose the next chain location
+  proposal <- rnorm(n = 1, mean = current, sd = s)
+  
+  if (proposal < 0 || proposal > 1) {
+    return (data.frame(proposal = proposal, alpha = 0, next_stop = current)) # ak je podiel mimo [0,1], tak hneď to zamietne
+  }
+    
+  # STEP 2: Decide whether or not to go there
+  proposal_plaus <- dbeta(x = proposal, shape1 = alpha_prior, shape2 = beta_prior) * 
+                    dbinom(x = y, size = n, prob = proposal)
+  current_plaus <- dbeta(x = current, shape1 = alpha_prior, shape2 = beta_prior) * 
+                    dbinom(x = y, size = n, prob = current)
+  alpha <- min(1, proposal_plaus/current_plaus)
+  next_stop <- sample(c(proposal, current), 
+                      size = 1,
+                      prob = c(alpha, 1 - alpha))
+  # Return the results
+  return (data.frame(proposal, alpha, next_stop))
+}
+
+```
+
+```{r mh-tour-normal, echo = FALSE}
+mh_tour_normal <- function(N, s, start){
+
+  # 1. Start the chain at defined location 
+  current <- start
+
+  # 2. Initialize the simulation
+  pi_chain <- rep(0, N)
+
+  # 3. Simulate N Markov chain stops
+  for(i in 1:N){    
+    # Simulate one iteration
+    sim <- one_mh_iteration_normal(s = s, current = current)
+    
+    # Record next location
+    pi_chain[i] <- sim$next_stop
+    
+    # Reset the current location
+    current <- sim$next_stop
+  }
+  
+  # 4. Return the chain locations
+  return(data.frame(iteration = c(1:N), pi_chain))
+}
+```
+
+### e. Simulácia prechádzky (N = 2000)
+```{r settings-tour-normal, echo = FALSE}
+set.seed(84735)
+
+N <- rep(2000, 4)
+s <- c(0.001, 0.01, 0.1, 0.2)
+
+output <- cbind(N, s)
+colnames(output) <- c("počet iterácií", "štandardná odchýlka")
+
+kable(output,
+      caption = "Settings for M-H tour",
+      align = 'c',
+      digits = 3
+      ) %>%
+      kable_styling(full_width = FALSE)
+```
+
+
+#### Štartujúca lokácia je v apriórnej strednej hodnote
+```{r tour-normal-start-prior, echo = FALSE}
+
+par(mfrow = c(1,2))
+
+for (i in 1:length(N)){
+  plot(mh_tour_normal(N = N[i], s = s[i], start = mean_prior), type = 'l', 
+     main = paste("M-H: start = ", round(mean_prior, 3), " s=", s[i]))  
+}
+
+par(mfrow = c(1,1))
+
+```
+
+#### Štartujúca lokácia je v podiele z dát
+```{r tour-normal-start-data, echo = FALSE}
+
+par(mfrow = c(1,2))
+
+for (i in 1:length(N)){
+  plot(mh_tour_normal(N = N[i], s = s[i], start = y/n), type = 'l', 
+     main = paste("M-H: start = ", round(y/n, 3), " s=", s[i]))  
+}
+
+par(mfrow = c(1,1))
+
+```
+
+#### Skutočné parametre posterior z analytického vyjadrenia
+``` {r posterior, echo = FALSE} 
+summarize_beta_binomial(alpha = alpha_prior, beta = beta_prior, y = y, n = n) |> mutate(across(where(is.numeric), ~round(.x, 3)))
+```
+
+Porovnaním grafov a analytického riešenia vidíme, že:
+- pri veľmi malom kroku $s = 0.001$ a $s = 0.01$ algoritmus nie vždy dokonvergoval ku správnej hodnote pre podiel. Hlavne ak na začiatku bola veľmi odlišná hodnota
+- pri kroku s odchýlkou $0.1$ alebo $0.2$ už prechádzka vyzerá dobre (variuje hore-dole)
+
+### f. Histogram a posterior model
+```{r posterior-plot, echo = FALSE}
+hist(x = mh_tour_normal(N = 2000, s = s[3], start = mean_prior)$pi_chain,
+     main = paste("Posterior aproximation: s = ", s[3]),
+     xlab = "π",
+     freq = FALSE, # aby to bola relativna pocetnost, nie frekvencia
+     breaks = 30)
+curve(dbeta(x, alpha_post, beta_post), 
+      add = TRUE, col = "red", lwd = 2)
+
+
+hist(x = mh_tour_normal(N = 2000, s = s[4], start = mean_prior)$pi_chain,
+     main = paste("Posterior aproximation: s = ", s[4]),
+     xlab = "π",
+     freq = FALSE, # aby to bola relativna pocetnost, nie frekvencia
+     breaks = 30)
+curve(dbeta(x, alpha_post, beta_post), 
+      add = TRUE, col = "red", lwd = 2)
+```
+Oba grafy zobrazujú histogram MCMC simulácie, jeden pre $s = 0.01$, druhý pre $s = 0.02$. Červená krivka zobrazuje analytický model $Beta(`r alpha_post`, `r beta_post`)$. Pre $s = 0.02$ je kvalita aproximácie lepšia. Histogram približne zachytil tvar rozdelenia, polohu strednej hdonoty aj variabilitu. <br>
+**Záver:** Metropolis-Hastings algoritmus s tuning parametrom s = 0.1 poskytuje spoľahlivú aproximáciu posterioru. Aj pri 2,000 iteráciách je aproximácia dostatočne presná.
+
+# Exercise 7.16 (Using your own data: Normal-Normal MCMC)
+Riešenie cvičenia 7.16 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-7#exercises-6) 
+a. Identify a question that could be answered with a Normal-Normal model for $\mu$, some average of interest. Consider scenarios for which data collection would be easy, such as the average high temperature this time of year, your average hourly screen time, etc. <br>
+b. Tune and describe a Normal prior model for $\mu$. <br>
+c. Collect and record your data here. <br>
+d. Below you will simulate the posterior model of $\mu$ using a Metropolis-Hastings algorithm. What is a reasonable proposal model to use in this algorithm? Explain. <br>
+e. Simulate a tour of 2000 $\mu$ values. Tune your proposal model until you are satisfied and construct the resulting trace plot. <br>
+f. Plot a histogram of your tour, and comment on the posterior model approximation within the context of your question.
+
+## Riešenie: 
+### a. - b. Nastavenie normálneho apriórneho modelu
+V úlohe budeme počítať odhadovať priemerný počet krokov. Na začiatku si nastavíme apriórny model:
+
+- priemerný počet krokov v aplikácii za rok je 9200
+- smerodajnú odchýlku nepoznáme, zvolíme štandardnú = 20% zo strednej hodnoty.
+
+\begin{equation}
+\mu \sim N(\theta = 9200, \tau^2 = 1840^2)
+\end{equation}
+
+```{r prior2, echo = FALSE}
+theta_prior <- 9200      # ročný priemer z apky
+tau_prior <- 0.2 * 9200  # odhad 20% z priemeru
+```
+
+### c. Dáta
+Máme dáta z niekoľkých dní:
+
+``` {r data2, echo = FALSE}
+kroky <- c(6523, 8120, 7211, 13256, 10501, 11198, 9023, 12017, 18523, 10787)
+n <- kroky |> length()
+y_bar <- kroky |> mean() |> round()
+sd_est <- kroky |> sd() |> round(-1)
+kroky
+```
+Stredná hodnota počtu krokov za jeden deň je po zaokrúhlení:
+\begin{equation}
+\bar{Y} = `r format(y_bar, scientific = FALSE, big.mark = "")`
+\end{equation}
+Vierohodnostná funkcia má normálne rozdelenie. Smerodajnú odchýlku stanovíme a počas algoritmu budeme odhadovať len hodnotu $\mu$.
+Smerodajnú odchýlku stanovíme na hodnotu zaokrúhlenú hodnotu z dát:
+
+\begin{equation}
+Y | \mu \sim \text{N}(\mu, \sigma^2 = `r sd_est`^2)
+\end{equation}
+
+### d.Simulácia posterior modelu
+
+Posteriórny model má aj analytické vyjadrenie: 
+Máme:
+- Prior: Normal (`r theta_prior`, `r tau_prior`)
+- Dáta: $\bar Y = `r format(y_bar, scientific = FALSE, big.mark = "")`$ za `r n` dní.
+
+**Posteriórny model:**
+```{r posterior2, echo = FALSE}
+posteriorN <- summarize_normal_normal(mean = theta_prior, sd = tau_prior, sigma = sd_est, y_bar = y_bar, n = n)
+mu_posterior <- posteriorN[2,"mean"] |> round()
+sd_posterior <- posteriorN[2,"sd"] |> round()
+```
+\begin{split}
+Y | \mu & \sim \text{N}(\mu, \sigma^2 = `r sd_est`^2) \\
+\mu & \sim N(9200, 1840^2) \;\; \Rightarrow \;\; 
+\mu | (Y = `r format(y_bar, scientific = FALSE, big.mark = " ")`) \sim \text{N}(`r format(mu_posterior, scientific = FALSE, big.mark = " ")`,`r format(sd_posterior, scientific = FALSE, big.mark = "")`^2)
+\end{split} 
+
+Opäť môžeme pre výber kandidátskeho rozdelenia použiť Normálne rozdelenie alebo rovnomerné rozdelenie. Použijeme normálne:
+
+\begin{equation}
+\mu' | \mu \; \sim \; N(\mu, s^2)
+\end{equation}
+
+V jednom kroku simulácie budeme porovnávať vierohodnosť aktuálneho a navrhnutého parametra využitím vzťahu pre nenormalizovanú aposteriórnu hustotu:
+\begin{equation}
+f(\mu | y = `r format(y_bar, scientific = FALSE, big.mark = " ")`) \propto f(\mu) L(\mu | y = `r format(y_bar, scientific = FALSE, big.mark = " ")`),
+\end{equation}
+
+pričom $f(\mu)$ je apriórne rozdelenie $N(`r theta_prior`, `r tau_prior`^2)$ a <br>
+$L(\mu | y = `r format(y_bar, scientific = FALSE, big.mark = " ")`)$ je vierohodnostná funkcia s rozdelením  $N (\mu, \sigma^2 = `r sd_est`^2)$.
+
+```{r one-mh-normal2, echo = FALSE}
+# One iteration or M-H process with normal density
+
+one_mh_iteration_normal2 <- function(s, current){
+  # STEP 1: Propose the next chain location
+  proposal <- rnorm(n = 1, mean = current, sd = s)
+  
+  # STEP 2: Decide whether or not to go there
+  proposal_plaus <- dnorm(x = proposal, mean = theta_prior, sd = tau_prior) *
+                    prod(dnorm(x = kroky, mean = proposal, sd = sd_est))
+  current_plaus <- dnorm(x = current, mean = theta_prior, sd = tau_prior) *
+                    prod(dnorm(x = kroky, mean = current, sd = sd_est))
+  alpha <- min(1, proposal_plaus/current_plaus)
+  next_stop <- sample(c(proposal, current), 
+                      size = 1,
+                      prob = c(alpha, 1 - alpha))
+  # Return the results
+  return (data.frame(proposal, alpha, next_stop))
+}
+
+```
+
+```{r mh-tour-normal2, echo = FALSE}
+mh_tour_normal2 <- function(N, s, start){
+
+  # 1. Start the chain at defined location
+  current <- start
+
+  # 2. Initialize the simulation
+  mu <- rep(0, N)
+
+  # 3. Simulate N Markov chain stops
+  for(i in 1:N){    
+    # Simulate one iteration
+    sim <- one_mh_iteration_normal2(s = s, current = current)
+    
+    # Record next location
+    mu[i] <- sim$next_stop
+    
+    # Reset the current location
+    current <- sim$next_stop
+  }
+  
+  # 4. Return the chain locations
+  return(data.frame(iteration = c(1:N), mu))
+}
+```
+
+### e. Simulácia prechádzky (N = 2000)
+```{r settings-tour-normal2, echo = FALSE}
+set.seed(84735)
+
+N <- rep(2000, 4)
+s <- c(10, 100, 500, 1000)
+
+output <- cbind(N, s)
+colnames(output) <- c("počet iterácií", "štandardná odchýlka")
+
+kable(output,
+      caption = "Settings for M-H tour",
+      align = 'c',
+      digits = 3
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+#### Štartujúca lokácia je v apriórnej strednej hodnote
+```{r tour-normal-start-prior2, echo = FALSE}
+
+par(mfrow = c(1,2))
+
+for (i in 1:length(N)){
+  plot(mh_tour_normal2(N = N[i], s = s[i], start = theta_prior), type = 'l', 
+       main = paste("M-H: start=", theta_prior, " s=", s[i]))  
+}
+
+par(mfrow = c(1,1))
+
+```
+
+#### Štartujúca lokácia je v priemernej hodnote z dát
+```{r tour-normal-start-data2, echo = FALSE}
+
+par(mfrow = c(1,2))
+
+for (i in 1:length(N)){
+  plot(mh_tour_normal2(N = N[i], s = s[i], start = y_bar), type = 'l', 
+       main = paste("M-H: start = ", round(y_bar, 3), " s=", s[i]))  
+}
+
+par(mfrow = c(1,1))
+
+```
+
+#### Skutočné parametre posterior z analytického vyjadrenia
+``` {r echo = FALSE} 
+summarize_normal_normal(mean = theta_prior, sd = tau_prior, sigma = sd_est, y_bar = y_bar, n = n) |> 
+  mutate(across(where(is.numeric), ~round(.x, 3)))
+```
+
+Porovnaním grafov a analytického riešenia vidíme, že:
+
+- pri malom kroku $s = 10$ a $s = 100$ algoritmus nie vždy dokonvergoval ku strednej hodnote. Hlavne ak na začiatku bola veľmi odlišná hodnota
+- pri kroku s odchýlkou $500$ alebo $1000$ už prechádzka vyzerá dobre
+
+### f. Histogram a posterior model
+```{r posterior-plot2, echo = FALSE}
+hist(x = mh_tour_normal2(N = 2000, s = s[3], start = theta_prior)$mu,
+     main = paste("Posterior aproximation: s = ", s[3]),
+     xlab = "mu",
+     freq = FALSE, # aby to bola relativna pocetnost, nie frekvencia
+     breaks = 30)
+curve(dnorm(x, mean = mu_posterior , sd = sd_posterior),
+      add = TRUE, col = "red", lwd = 2)
+
+hist(x = mh_tour_normal2(N = 2000, s = s[4], start = theta_prior)$mu,
+     main = paste("Posterior aproximation: s = ", s[4]),
+     xlab = "mu",
+     freq = FALSE, # aby to bola relativna pocetnost, nie frekvencia
+     breaks = 30)
+curve(dnorm(x, mean = mu_posterior , sd = sd_posterior), 
+      add = TRUE, col = "red", lwd = 2)
+```
+Oba grafy zobrazujú histogram MCMC simulácie, jeden pre $s = 500$, druhý pre $s = 1000$. Červená krivka zobrazuje analytický model $N(`r format(mu_posterior, scientific = FALSE, big.mark = " ")`,`r format(sd_posterior, scientific = FALSE, big.mark = "")`^2)$. Pre $s = 1000$ je ešte o niečo lepšia ako pre $s = 500$. Histogram v oboch prípadoch približne zachytil tvar rozdelenia, polohu strednej hodnoty (okolo 10500) aj variabilitu. <br>
+  **Záver:** Metropolis-Hastings algoritmus s tuning parametrom 500 až 1000 poskytuje spoľahlivú aproximáciu posterioru. Aj pri 2,000 iteráciách je aproximácia dostatočne presná.

@@ -33,24 +33,25 @@ library(kableExtra)
 
 
 ## Practice: Normal-Normal simulation
-### Exercise 7.9 (One iteration with a Uniform proposal model)
+## Exercise 7.9 (One iteration with a Uniform proposal model)
 > In the next set of exercises, return to the Bayesian model setting:
 \begin{split}
 Y|\mu & \sim \text{N}(\mu, 0.75^2) \\
 \mu   & \sim \text{N}(0, 1^2).  \\
 \end{split}
 
-> Assume we observe  $Y = 6.25$ and wish to construct a Metropolis-Hastings simulation of the corresponding posterior model for $\lambda$. The function `one_mh_iteration()` from the text utilizes a Uniform proposal model, $\mu′|\mu ∼ Unif(\mu − w, \mu + w)$ with half-width w = 1. Starting from a current value of $\mu$ = 3 and using `set.seed(1)`, run the code below and comment on the returned proposal, alpha, and next_stop values.<br>
+> Assume we observe  $Y = 6.25$ and wish to construct a Metropolis-Hastings simulation of the corresponding posterior model for $\lambda$. The function `one_mh_iteration()` from the text utilizes a Uniform proposal model, $\mu′|\mu ∼ Unif(\mu − w, \mu + w)$ with half-width w = 1. <br>
+> Starting from a current value of $\mu$ = 3 and using `set.seed(1)`, run the code below and comment on the returned proposal, alpha, and next_stop values.<br>
 > a. `one_mh_iteration(w = 0.01, current = 3)` <br>
 > b. `one_mh_iteration(w = 0.5, current = 3)` <br>
 > c. `one_mh_iteration(w = 1, current = 3)` <br>
 > d. `one_mh_iteration(w = 3, current = 3)` <br>
 
-### Riešenie:
+## Riešenie:
 
 Jeden krok Metropolis-Hastings algoritmu predstavuje navrhnutie ďalšej hodnoty v iterácii. Túto hodnotu vyberáme z kandidátskej hustoty. V tomto príklade je kandidátskou hustotou uniformné rozdelenie so šírkou $2w$ a stredom v pôvodnej lokácii. 
 
-#### Jedna iterácia Metropolis-Hastings algoritmu
+### Jedna iterácia Metropolis-Hastings algoritmu
 
 ```{r one-mh-iteration}
 
@@ -72,17 +73,14 @@ one_mh_iteration <- function(w, current){
 }
 ```
 
-#### Otestovanie rôznych hodnôt pre šírku uniformného rozdelenia
+### Otestovanie rôznych hodnôt pre šírku uniformného rozdelenia
 ```{r settings-w, echo = FALSE}
 set.seed(1)
 
-output <- rbind(
-    cbind('w' = 0.01, 'current' = 3),
-    cbind('w' = 0.5, 'current' = 3),
-    cbind('w' = 1, 'current' = 3),
-    cbind('w' = 3, 'current' = 3)
-  )
-  
+w <- c(0.01, 0.5, 1, 3)
+current <- rep(3, 4)
+output <- cbind(w, current)
+
 kable(output,
       caption = "Settings for one iteration",
       align = 'c',
@@ -96,12 +94,12 @@ kable(output,
 
 set.seed(1)
 
-output <- rbind(
-    cbind('w' = 0.01, 'current' = 3, one_mh_iteration(w = 0.01, current = 3)),
-    cbind('w' = 0.5, 'current' = 3, one_mh_iteration(w = 0.5, current = 3)),
-    cbind('w' = 1, 'current' = 3, one_mh_iteration(w = 1, current = 3)),
-    cbind('w' = 3, 'current' = 3, one_mh_iteration(w = 3, current = 3))
-  )
+output <- cbind(w,
+      current,
+      purrr::map2_dfr(w, current, one_mh_iteration)
+  
+)
+
 ```
 
 ``` {r one-iteration-various-w-kable, echo = FALSE}
@@ -114,7 +112,332 @@ kable(output,
 ```
 - Ak si nastavím set.seed(1), tak pre $w = 0.01$ máme nasledujúci návrh kroku `r round(output$proposal[1], 3)` veľmi blízko pôvodného kroku, maximálne do 0.01. Jeho akceptačnú pravdepodobnosť `r round(output$alpha[1], 3)`. 
 - Pre $w = 0.5$ je ďalší návrh `r round(output$proposal[2], 3)` a určite bude akceptovaný, keďže jeho pravdepodobnosť je 1.
-- Pre šírku $w = 1$ je ďalší navrhovaný krok `r round(output$alpha[3], 3)` viac vzdialený od pôvodnej hodnoty 3, jeho akceptačná pravdepodobnosť je pomerne nízka `r round(output$alpha[3], 3)`, ale aj napriek tomu je táto hodnota akceptovaná pre ďalší krok.
-- Pre šírku $w = 3$ je ďalší navrhovaný krok `r round(output$alpha[4], 3)` už veľmi vzdialený od pôvodnej hodnoty 3, jeho akceptačná pravdepodobnosť je veľmi nízka `r round(output$alpha[4], 4)`, no táto hodnota nie je akceptovaná. V ďalšom kroku teda zostáva na pôvodnej hodnote.
+- Pre šírku $w = 1$ je ďalší navrhovaný krok `r round(output$proposal[3], 3)` viac vzdialený od pôvodnej hodnoty 3, jeho akceptačná pravdepodobnosť je pomerne nízka `r round(output$alpha[3], 3)`, ale aj napriek tomu je táto hodnota akceptovaná pre ďalší krok.
+- Pre šírku $w = 3$ je ďalší navrhovaný krok `r round(output$proposal[4], 3)` už veľmi vzdialený od pôvodnej hodnoty 3, jeho akceptačná pravdepodobnosť je veľmi nízka `r round(output$alpha[4], 4)`, no táto hodnota nie je akceptovaná. V ďalšom kroku teda zostáva na pôvodnej hodnote.
 
+
+## Exercise 7.10 (An entire tour with a Uniform proposal model)
+> Implement the Metropolis-Hastings function `mh_tour()` defined in Section 7.3 to construct tours of \mu under each of the following scenarios. Construct trace plots and histograms for each tour.
+a. 50 iterations, $w = 50$ <br>
+b. 50 iterations, $w = 0.01$ <br>
+c. 1000 iterations, $w = 50$ <br>
+d. 1000 iterations, $w = 0.01$ <br>
+e. Contrast the trace plots in parts `a` and `b`. Explain why changing $w$ has this effect. <br>
+f. Consider the results in parts `c` and `d`. Is the $w$ value as important when the number of iterations is much larger? Explain.
+
+## Riešenie:
+### Funkcia pre celú prechádzku (tour) M-H algoritmu
+- zadať ako vstup počet iterácii `N` a polovičnú šírku intervalu `w`
+```{r mh-tour}
+mh_tour <- function(N, w){
+
+  # 1. Start the chain at location 3
+  current <- 3
+
+  # 2. Initialize the simulation
+  mu <- rep(0, N)
+
+  # 3. Simulate N Markov chain stops
+  for(i in 1:N){    
+    # Simulate one iteration
+    sim <- one_mh_iteration(w = w, current = current)
+    
+    # Record next location
+    mu[i] <- sim$next_stop
+    
+    # Reset the current location
+    current <- sim$next_stop
+  }
+  
+  # 4. Return the chain locations
+  return(data.frame(iteration = c(1:N), mu))
+}
+```
+
+### a. - d. Otestovanie rôznych iterácií a šírky uniformného rozdelenia
+```{r settings-tour, echo = FALSE}
+set.seed(1)
+
+iterations <- c(50, 50, 1000, 1000)
+w <- c(50, 0.1, 50, 0.01)
+
+output <- cbind(iterations, w)
+
+kable(output,
+      caption = "Settings for M-H tour",
+      align = 'c',
+      digits = 3
+      ) %>%
+      kable_styling(full_width = FALSE)
+```
+
+
+```{r tour-various-values}
+
+par(mfrow = c(2,2))
+
+for (i in 1:length(iterations)){
+  plot(mh_tour(N = iterations[i], w[i]), type = 'l', 
+     main = paste("Metropolis-Hastings tour pre N=", iterations[i],"a w=", w[i]))  
+}
+
+par(mfrow = c(1,1))
+
+```
+### e. Contrast the trace plots in parts `a` and `b`. Explain why changing w has this effect.
+N = `r iterations[1]`, w = `r w[1]`
+- hodnoty sú zamrznuté na hodnote 3, lebo šírka je obrovská. 
+- Algoritmus navrhuje ďalšie kroky ďaleko od pôvodného, s úplne odlišnou hustotou ako v pôvodnej hodnote. V podstate s prakticky nulovou aposteriórnou hustotou. Vtedy je akceptačná pravdepodobnosť alfa veľmi nízka
+- Skoro všetky hodnoty sa **zamietajú**
+
+N = `r iterations[2]`, w = `r w[2]`
+- šírka je tu oveľa menšia, čiže skoro stále sa akceptuje nová hodnota, lebo ma podobnú aposteriórnu hustotu ako pôvodná hodnota --> hodnota sa v podstate stále posúva
+- trend viac menej stále rastie, nedokonvergoval, lebo iterácií je pomerne málo, čiže nepreskúmal posteriórnu hustotu
+
+**Záver:**
+Extrémne hodnoty w spôsobujú zlé výsledky:
+- w príliš veľké → veľa zamietnutí → "zamrznutie" → nedostatočná explorácia
+- w príliš malé → vysoká akceptácia, ale pomalý pohyb → nedostatočná konvergencia
+
+### f. Is the w value as important when the number of iterations is much larger? Explain.
+N = `r iterations[3]`, w = `r w[3]`
+- aj tu je viditeľné čiastočné zamrznutie, ale občas to aj pri malej pravdepodobnosti preskočí na inú
+- je to lepšie ako pre menej iterácií, ale stále nie ideálne
+- stredná hodnota je okolo 4
+
+N = `r iterations[4]`, w = `r w[4]`
+- reťazec je hladký a osciluje 
+- ale táto prechádzka nekonverguje okolo správnej hodnoty 4 (stredná hodnota je okolo 3)
+- pri kroku 0.01 potrebujeme 100 iterácií jedným smerom, aby sme sa dostali z 3 do 4, ale niektoré kroky sa zamietajú, niektoré idú opačným smerom, niektoré sú menšie ako 0.01
+- čiže de facto nedokonvergoval
+
+**Záver:**
+Aj keď sa situácia zlepší pri vyššom počte iterácií, parameter w zostáva kritický. Zvýšenie N z 50 na 1000 nepomôže, ak je w nesprávne nastavené:
+- Pri w=50: stále je príliš veľa zamietnutých návrhov
+- Pri w=0.01: stále je príliš pomalá konvergencia
+
+### Porovnanie pri zafixovaní počtu iterácií
+zafixujme 1000 iterácií a skúsme rôzne hodnoty pre w
+```{r tour-various-w}
+
+set.seed(1)
+
+iterations <- rep(1000, 4)
+w <- c(2, 1, 0.1, 0.01)
+
+output <- cbind(iterations, w)
+par(mfrow = c(2,2))
+for (i in 1:length(iterations)){
+  plot(mh_tour(N = iterations[i], w[i]), type = 'l', 
+     main = paste("Metropolis-Hastings tour pre N=", iterations[i],"a w=", w[i]))  
+}
+par(mfrow = c(1,1))
+
+```
+Pre w = 1 alebo w = 2 už prechádzka osciluje okolo hodnoty 4, čiže tieto sú vhodnejšie ako príliš nízke parametre 0.01 a 0.1.
+
+## Exercise 7.11 (Changing the proposal model) 
+> For this exercise, modify `one_mh_iteration()` to create a new function, `one_mh_iteration_normal()`, which utilizes a symmetric Normal proposal model, centered at the current chain value $\mu$ with standard deviation $s$: $\mu'|\mu \sim N(\mu, s^2)$ <br>
+> Subsequently, starting from a current value of $\mu = 3$ and `set.seed(1)`, run this function under each setting below. Comment on the returned proposal, alpha, and next_stop values. <br>
+> a. `one_mh_iteration_normal(s = 0.01, current = 3)` <br>
+> b. `one_mh_iteration_normal(s = 0.5, current = 3)` <br>
+> c. `one_mh_iteration_normal(s = 1, current = 3)` <br>
+> d. `one_mh_iteration_normal(s = 3, current = 3)`
+
+## Riešenie:
+Obmena predchádzajúceho M-H algoritmu tak, že kandidátskou hustotou nie je uniformné rozdelenie, ale normálne rozdelenie so stredom v pôvodnej hodnote a pevne stanovenou smerodajnou odchýlkou pre celú prechádzku.  Cieľom je otestovať a porovnať rôzne smerodajné odchýlky. 
+
+```{r one-mh-normal}
+# One iteration or M-H process with normal density
+
+one_mh_iteration_normal <- function(s, current){
+  # STEP 1: Propose the next chain location
+  proposal <- rnorm(n = 1, mean = current, sd = s)
+  
+  # STEP 2: Decide whether or not to go there
+  proposal_plaus <- dnorm(proposal, 0, 1) * dnorm(6.25, proposal, 0.75)
+  current_plaus <- dnorm(current, 0, 1) * dnorm(6.25, current, 0.75)
+  alpha <- min(1, proposal_plaus/current_plaus)
+  next_stop <- sample(c(proposal, current), 
+                      size = 1,
+                      prob = c(alpha, 1 - alpha))
+  
+  # Return the results
+  return (data.frame(proposal, alpha, next_stop))
+}
+```
+### a. - d. Otestovanie rôznych hodnôt smerodajnej odchýlky normálneho rozdelenia pre kandidátsku hustotu
+```{r settings-sd, echo = FALSE}
+set.seed(1)
+
+s <- c(0.01, 0.5, 1, 3)
+current <- rep(3, 4)
+
+output <- cbind(s,
+                current,
+                purrr::map2_dfr(s, current, one_mh_iteration_normal)
+  
+)
+
+```
+
+``` {r one-iteration-normal-various-s-kable, echo = FALSE}
+kable(output,
+      caption = "Comparison of proposal and next stop based on parameter sd",
+      align = 'c',
+      digits = 3
+      ) %>%
+      kable_styling(full_width = FALSE)
+```
+
+- Ak si nastavím set.seed(1), tak pre $s = 0.01$ máme nasledujúci návrh kroku `r round(output$proposal[1], 3)` veľmi blízko pôvodného kroku, maximálne do 0.01. Jeho akceptačnú pravdepodobnosť `r round(output$alpha[1], 3)`. 
+- Pre $s = 0.5$ je ďalší návrh `r round(output$proposal[2], 3)` a určite bude akceptovaný, keďže jeho pravdepodobnosť je 1.
+- Pre šírku $s = 1$ je ďalší navrhovaný krok `r round(output$proposal[3], 3)` viac vzdialený od pôvodnej hodnoty 3, a znova je určite akceptovaný, lebo jeho akceptačná pravdepodobnosť je 1.
+- Pre šírku $s = 3$ je ďalší navrhovaný krok `r round(output$proposal[4], 3)` už veľmi vzdialený od pôvodnej hodnoty 3, jeho akceptačná pravdepodobnosť je veľmi nízka `r round(output$alpha[4], 4)`, no táto hodnota nie je akceptovaná. V ďalšom kroku teda zostáva na pôvodnej hodnote.
+**Záver:**
+Opäť sa ukazuje, že príliš vysoká hodnota pre $sd$ môže spôsobiť zamrznutie prechádzky na jednej hodnote.
+
+## Exercise 7.12 (Metropolis-Hastings tour with Normal proposals)
+> Upon completing the previous exercise, modify mh_tour() to create a new function, mh_tour_normal(), which constructs a chain of $\mu$ values using a Normal proposal model with standard deviation $s$. Subsequently, using `set.seed(84735)`, run this function under each setting below and construct a trace plot of the chain.<br>
+a. 20 iterations, $s = 0.01$ <br>
+b. 20 iterations, $s = 10$ <br>
+c. 1000 iterations, $s = 0.01$ <br>
+d. 1000 iterations, $s = 10$ <br>
+e. Contrast the trace plots in parts `a` and `b`. Explain in simple terms why changing the standard deviation of the Normal proposal model causes these differences <br>
+f. Reflecting on the above results, tune your Metropolis-Hastings algorithm. That is, identify a reasonable value for standard deviation $s$ and provide a trace plot as proof.
+
+
+## Riešenie:
+### Funkcia pre celú prechádzku (tour) M-H algoritmu
+- zadať ako vstup počet iterácii `N` a smerodajnú odchýlku `sd`
+```{r mh-tour-normal}
+mh_tour_normal <- function(N, s){
+
+  # 1. Start the chain at location 3
+  current <- 3
+
+  # 2. Initialize the simulation
+  mu <- rep(0, N)
+
+  # 3. Simulate N Markov chain stops
+  for(i in 1:N){    
+    # Simulate one iteration
+    sim <- one_mh_iteration_normal(s = s, current = current)
+    
+    # Record next location
+    mu[i] <- sim$next_stop
+    
+    # Reset the current location
+    current <- sim$next_stop
+  }
+  
+  # 4. Return the chain locations
+  return(data.frame(iteration = c(1:N), mu))
+}
+```
+
+### a. - d. Otestovanie rôznych iterácií a smerodajnej odchýlky kadndidátskeho normálneho rozdelenia
+```{r settings-tour-normal, echo = FALSE}
+set.seed(84735)
+
+iterations <- c(20, 20, 1000, 1000)
+s <- c(0.1, 10, 0.1, 10)
+
+output <- cbind(iterations, s)
+
+kable(output,
+      caption = "Settings for M-H tour",
+      align = 'c',
+      digits = 3
+      ) %>%
+      kable_styling(full_width = FALSE)
+```
+
+
+```{r tour-normal-various-values}
+
+par(mfrow = c(2,2))
+
+for (i in 1:length(iterations)){
+  plot(mh_tour_normal(N = iterations[i], s = s[i]), type = 'l', 
+     main = paste("Metropolis-Hastings tour pre N=", iterations[i],"a s=", s[i]))  
+}
+
+par(mfrow = c(1,1))
+
+```
+### e. Contrast the trace plots in parts `a` and `b`. Explain in simple terms why changing the standard deviation of the Normal proposal model causes these differences
+N = `r iterations[1]`, s = `r s[1]`
+- hodnoty sa hýbu veľmi pomaly, lebo smerodajná odchýlka je veľmi malá
+- za 20 iterácií sa nedostal k cieľu 4
+- vysoká akceptácia, ale nedostatočná explorácia
+
+N = `r iterations[2]`, s = `r s[2]`
+- typické "zamrznutie"
+- veľká smerodajná odchýlka, čiže často zamieta
+
+**Záver:**
+- s príliš veľké → veľa zamietnutí → "zamrznutie" → nedostatočná explorácia
+- s príliš malé → vysoká akceptácia, ale pomalý pohyb → nedostatočná konvergencia
+- záver je veľmi podobný ako pri uniformnom rozdelení
+
+### f. Reflecting on the above results, tune your Metropolis-Hastings algorithm. That is, identify a reasonable value for standard deviation $s$ and provide a trace plot as proof.
+N = `r iterations[3]`, s = `r s[3]`
+- aj pri nízkej smerodajnej odchýlke sa pri dostatočnom počte iterácií nakoniec dostal k správnej oblasti okolo 4
+- osciluje okolo správnej hodnoty 4
+- keďže je SD pomerne nízka, potrebuje veľa iterácií na konvergenciu
+
+N = `r iterations[4]`, s = `r s[4]`
+- keďže SD je väčšia ako v predchádzajúcom, tak tu sú aj väčšie výkyvy
+- taktiež viditeľné občane zamrznutie
+
+**Záver:**
+Vhodná smerodajná odchýlka bude zrejme medzi 0.1 a 10
+### Porovnanie rôznych SD pri zafixovaní počtu iterácií
+zafixujme 1000 iterácií a skúsme rôzne hodnoty pre w
+```{r tour-various-s}
+
+set.seed(1)
+
+iterations <- rep(1000, 4)
+s <- c(8, 5, 1, 0.5)
+
+output <- cbind(iterations, s)
+par(mfrow = c(2,2))
+for (i in 1:length(iterations)){
+  plot(mh_tour_normal(N = iterations[i], s = s[i]), type = 'l', 
+     main = paste("Metropolis-Hastings tour pre N=", iterations[i],"a s=", s[i]))  
+}
+par(mfrow = c(1,1))
+
+```
+Z grafov vidno, že vhodná hodnota pre s je okolo 1.
+
+## Exercise 7.13 (Change the Normal prior)
+> The `one_mh_iteration(w, current)` function from the text is tailored to the Normal-Normal model with a $N(0, 1^2)$ prior for$\mu$. 
+For this exercise, create a new function `new_mh_iteration(w, current, m, s)` which can utilize any $N(m,s^2)$ prior. 
+Subsequently, starting from a current value of $\mu = 3$  and using `set.seed(84735)`, run this function under each setting below. Comment on the resulting proposal, alpha, and next_stop values.<br>
+> a. `new_mh_iteration(w = 1, current = 3, m = 0, s = 10)` <br>
+> b. `new_mh_iteration(w = 1, current = 3, m = 20, s = 1)` <br>
+> c. `new_mh_iteration(w = 0.1, current = 3, m = 20, s = 1)` <br>
+> d. `new_mh_iteration(w = 0.1, current = 3, m = -15, s = 10)` <br>
+
+``` {r new-mh-iteration}
+
+new_mh_iteration <- function(w, current, m, s){
+
+ # STEP 1: Propose the next chain location
+ proposal <- runif(1, min = current - w, max = current + w)
+  
+ # STEP 2: Decide whether or not to go there
+ proposal_plaus <- dnorm(proposal, m, s) * dnorm(6.25, proposal, 0.75)
+ current_plaus  <- dnorm(current, m, s) * dnorm(6.25, current, 0.75)
+ alpha <- min(1, proposal_plaus / current_plaus)
+ next_stop <- sample(c(proposal, current), 
+                     size = 1, prob = c(alpha, 1-alpha))
+  
+ # Return the results
+ return(data.frame(proposal, alpha, next_stop))
+}
+```
 
