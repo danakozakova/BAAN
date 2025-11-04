@@ -204,7 +204,7 @@ mh_tour_normal <- function(N, s, start){
   }
   
   # 4. Return the chain locations
-  return(data.frame(iteration = c(1:N), pi_chain))
+  return(data.frame(iteration = c(1:N), pi = pi_chain))
 }
 ```
 
@@ -213,7 +213,7 @@ mh_tour_normal <- function(N, s, start){
 set.seed(84735)
 
 N <- rep(2000, 4)
-s <- c(0.001, 0.01, 0.1, 0.2)
+s <- c(0.01, 0.05, 0.1, 0.2)
 
 output <- cbind(N, s)
 colnames(output) <- c("počet iterácií", "štandardná odchýlka")
@@ -222,10 +222,9 @@ kable(output,
       caption = "Settings for M-H tour",
       align = 'c',
       digits = 3
-      ) %>%
-      kable_styling(full_width = FALSE)
+) %>%
+  kable_styling(full_width = FALSE)
 ```
-
 
 #### Štartujúca lokácia je v apriórnej strednej hodnote
 ```{r tour-normal-start-prior, echo = FALSE}
@@ -234,21 +233,22 @@ par(mfrow = c(1,2))
 
 for (i in 1:length(N)){
   plot(mh_tour_normal(N = N[i], s = s[i], start = mean_prior), type = 'l', 
-     main = paste("M-H: start = ", round(mean_prior, 3), " s=", s[i]))  
+       main = paste("M-H: start=", round(mean_prior, 3), " s=", s[i]))  
 }
 
 par(mfrow = c(1,1))
 
 ```
 
-#### Štartujúca lokácia je v podiele z dát
-```{r tour-normal-start-data, echo = FALSE}
+#### Štartujúca lokácia je v posteriórnej strednej hodnote
+```{r tour-normal-start-post, echo = FALSE}
+mean_post <- alpha_post / (alpha_post + beta_post)
 
 par(mfrow = c(1,2))
 
 for (i in 1:length(N)){
-  plot(mh_tour_normal(N = N[i], s = s[i], start = y/n), type = 'l', 
-     main = paste("M-H: start = ", round(y/n, 3), " s=", s[i]))  
+  plot(mh_tour_normal(N = N[i], s = s[i], start = mean_post), type = 'l', 
+       main = paste("M-H: start = ", round(mean_post, 3), " s=", s[i]))  
 }
 
 par(mfrow = c(1,1))
@@ -256,35 +256,36 @@ par(mfrow = c(1,1))
 ```
 
 #### Skutočné parametre posterior z analytického vyjadrenia
-``` {r posterior, echo = FALSE} 
-summarize_beta_binomial(alpha = alpha_prior, beta = beta_prior, y = y, n = n) |> mutate(across(where(is.numeric), ~round(.x, 3)))
+``` {r echo = FALSE} 
+summarize_beta_binomial(alpha = alpha_prior, beta = beta_prior, y = y, n = n) |> 
+  mutate(across(where(is.numeric), ~round(.x, 3)))
 ```
 
 Porovnaním grafov a analytického riešenia vidíme, že:
-- pri veľmi malom kroku $s = 0.001$ a $s = 0.01$ algoritmus nie vždy dokonvergoval ku správnej hodnote pre podiel. Hlavne ak na začiatku bola veľmi odlišná hodnota
-- pri kroku s odchýlkou $0.1$ alebo $0.2$ už prechádzka vyzerá dobre (variuje hore-dole)
+
+- pri veľmi malom kroku $s = 0.01$ algoritmus pomaly konvergoval
+- pri kroku $s = 0.05$ až $s = 0.2$ už prechádzka vyzerá dobre a algoritmus konvergoval k posteriórnej strednej hodnote
 
 ### f. Histogram a posterior model
 ```{r posterior-plot, echo = FALSE}
-hist(x = mh_tour_normal(N = 2000, s = s[3], start = mean_prior)$pi_chain,
+hist(x = mh_tour_normal(N = 2000, s = s[3], start = mean_prior)$pi,
      main = paste("Posterior aproximation: s = ", s[3]),
-     xlab = "π",
+     xlab = "pi",
      freq = FALSE, # aby to bola relativna pocetnost, nie frekvencia
      breaks = 30)
-curve(dbeta(x, alpha_post, beta_post), 
+curve(dbeta(x, shape1 = alpha_post , shape2 = beta_post),
       add = TRUE, col = "red", lwd = 2)
 
-
-hist(x = mh_tour_normal(N = 2000, s = s[4], start = mean_prior)$pi_chain,
+hist(x = mh_tour_normal(N = 2000, s = s[4], start = mean_prior)$pi,
      main = paste("Posterior aproximation: s = ", s[4]),
-     xlab = "π",
+     xlab = "pi",
      freq = FALSE, # aby to bola relativna pocetnost, nie frekvencia
      breaks = 30)
-curve(dbeta(x, alpha_post, beta_post), 
+curve(dbeta(x, shape1 = alpha_post, shape2 = beta_post), 
       add = TRUE, col = "red", lwd = 2)
 ```
-Oba grafy zobrazujú histogram MCMC simulácie, jeden pre $s = 0.01$, druhý pre $s = 0.02$. Červená krivka zobrazuje analytický model $Beta(`r alpha_post`, `r beta_post`)$. Pre $s = 0.02$ je kvalita aproximácie lepšia. Histogram približne zachytil tvar rozdelenia, polohu strednej hdonoty aj variabilitu. <br>
-**Záver:** Metropolis-Hastings algoritmus s tuning parametrom s = 0.1 poskytuje spoľahlivú aproximáciu posterioru. Aj pri 2,000 iteráciách je aproximácia dostatočne presná.
+Oba grafy zobrazujú histogram MCMC simulácie, jeden pre $s = 0.1$, druhý pre $s = 0.2$. Červená krivka zobrazuje analytický model $Beta(`r alpha_post`, `r beta_post`)$. Histogram v oboch prípadoch približne zachytil tvar rozdelenia, polohu strednej hodnoty (okolo `r round(mean_post, 2)`) aj variabilitu. <br>
+  **Záver:** Metropolis-Hastings algoritmus s tuning parametrom 0.1 až 0.2 poskytuje spoľahlivú aproximáciu posterioru. Aj pri 2,000 iteráciách je aproximácia dostatočne presná.
 
 # Exercise 7.16 (Using your own data: Normal-Normal MCMC)
 Riešenie cvičenia 7.16 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-7#exercises-6) 
@@ -336,7 +337,7 @@ Y | \mu \sim \text{N}(\mu, \sigma^2 = `r sd_est`^2)
 
 Posteriórny model má aj analytické vyjadrenie: 
 Máme:
-- Prior: Normal (`r theta_prior`, `r tau_prior`)
+- Prior: Normal (`r theta_prior`, `r tau_prior`^2)
 - Dáta: $\bar Y = `r format(y_bar, scientific = FALSE, big.mark = "")`$ za `r n` dní.
 
 **Posteriórny model:**
@@ -490,3 +491,420 @@ curve(dnorm(x, mean = mu_posterior , sd = sd_posterior),
 ```
 Oba grafy zobrazujú histogram MCMC simulácie, jeden pre $s = 500$, druhý pre $s = 1000$. Červená krivka zobrazuje analytický model $N(`r format(mu_posterior, scientific = FALSE, big.mark = " ")`,`r format(sd_posterior, scientific = FALSE, big.mark = "")`^2)$. Pre $s = 1000$ je ešte o niečo lepšia ako pre $s = 500$. Histogram v oboch prípadoch približne zachytil tvar rozdelenia, polohu strednej hodnoty (okolo 10500) aj variabilitu. <br>
   **Záver:** Metropolis-Hastings algoritmus s tuning parametrom 500 až 1000 poskytuje spoľahlivú aproximáciu posterioru. Aj pri 2,000 iteráciách je aproximácia dostatočne presná.
+
+# Exercise 8.19 (Tučniaky: odhad - Penguins: estimation)
+Riešenie cvičenia 8.19 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-8#exercises-7) 
+
+> Let $\mu$ denote the typical flipper length (in mm) among the Adelie penguin species. To learn about $\mu$, we'll utilize flipper measurements $(Y_1,Y_2,\dots,Y_n)$ on a sample of Adelie penguins. <br>
+a. Explain which Bayesian model is appropriate for this analysis: Beta-Binomial, Gamma-Poisson, or Normal-Normal. <br>
+b. Your prior understanding is that the average flipper length for all Adelie penguins is about 200mm, but you aren't very sure. It's plausible that the average could be as low a 140mm or as high as 260mm. Specify an appropriate prior model for $\mu$. <br>
+c. The `penguins_bayes` data in the bayesrules package contains data on the flipper lengths for a sample of three different penguin species. For the Adelie `species`, how many data points are there and what's the sample mean `flipper_length_mm`? <br>
+d. In light of your prior and data, calculate and interpret a (middle) 95% posterior credible interval for $\mu$. <br>
+NOTE: You'll first need to specify your posterior model of $\mu$.
+
+## Riešenie:
+
+### a. Výber modelu
+- Máme dĺžku plutvy v milimetroch, to je spojitá veličina. Nie je to ani podiel, ani počet udalostí v čase.
+- odhadujeme priemernú/typickú hodnotu dĺžky plutvy -> t.j. treba odhadnúť strednú hodnotu rozdelenia
+**Modely na zváženie:**
+- $Beta-binomický$ pre podiel $\pi$ a diskrétne dáta
+- $Gamma-Poisson$ pre počty $\lambda$ a diskrétne dáta
+- $Normal-Normal$ pre stredné hodnoty $\mu$ a spojité dáta
+
+**Model:**
+
+$Y_i$je dĺžka plutvy i-teho tučniaka
+
+\begin{align}
+\mu & \sim N(\theta, \tau^2) \quad \text{(prior)} \\
+Y_i | \mu & \sim N(\mu, \sigma^2) \quad \text{(likelihood)}
+\end{align}
+
+### b. Nastavenie apriórneho modelu
+- Priemerná dĺžka plutvy: cca 200 mm
+- Pravdepodobný rozsah: 140 mm až 260 mm
+
+**Stredná hodnota:**
+
+- $\mu = 200$
+
+**Smerodajná odchýlka:**
+
+- rozsah 140-260 mm = 120 mm 
+- pravidlo: 95% hodnot leží v intervale +-2SD
+- $\tau$ = 120/4 = 30
+
+**Prior:**
+\begin{equation}
+\mu \sim N(\theta = 200, \tau^2 = 30^2)
+\end{equation}
+
+```{r ex819-b-set, echo = FALSE}
+theta <- 200
+tau <- 30
+plot_normal(mean =theta, sd = tau) +
+  labs(title = 'Prior model pre dĺžku plutvy tučniakov Adelie') +
+   geom_vline(xintercept = c(140, 260), 
+             linetype = "dashed", 
+             color = "red", 
+             alpha = 0.5)
+```
+
+### c. Dáta
+**Načítanie dát z `penguins_bayes`**
+```{r ex819-c, echo = FALSE}
+data(penguins_bayes)
+adelie_data <- penguins_bayes %>% 
+  filter(species == "Adelie") %>%
+  filter(!is.na(flipper_length_mm))
+adelie_n <- nrow(adelie_data)
+adelie_mean <- mean(adelie_data$flipper_length_mm)
+adelie_sd <- sd(adelie_data$flipper_length_mm)
+```
+V databáze `penguins_bayes` je:
+
+-`r adelie_n` riadkov dát pre tučniaky druhu Adelie. 
+- Priemerná dĺžka ich plutiev v tomto výbere je `r round(adelie_mean, 3)`.
+
+### d. Posteriórny model a kredibilný interval
+#### Posteriórny model
+
+```{r ex819-d, echo = FALSE}
+# Posterior model
+posteriorA <- summarize_normal_normal(mean = theta, 
+                                      sd = tau, 
+                                      sigma = adelie_sd, 
+                                      y_bar = adelie_mean, 
+                                      n = adelie_n)
+mu_posteriorA <- posteriorA[2,"mean"] |> round(2)
+sd_posteriorA <- posteriorA[2,"sd"] |> round(2)
+
+posteriorA |> mutate(across(where(is.numeric), ~round(.x, 2)))
+
+```
+
+**Dáta:**
+
+- $\bar Y = `r round(adelie_mean, 2)`$ 
+- $SD = `r round(adelie_sd, 2)`$
+- pre $`r adelie_n`$ tučniakov.
+
+**Posteriórny model:**
+
+\begin{split}
+Y | \mu & \sim \text{N}(\mu, \sigma^2 = `r round(adelie_sd, 2)`^2) \\
+\mu & \sim N(200, 30^2) \;\; \Rightarrow \;\; 
+\mu | Y \sim N(`r round(mu_posteriorA, 2)`, `r round(sd_posteriorA, 2)`^2)
+\end{split}
+
+``` {r ex819-modely}
+plot_normal_normal(mean = theta, 
+                   sd = tau, 
+                   sigma = adelie_sd, 
+                   y_bar = adelie_mean, 
+                   n = adelie_n) + 
+  labs(title = "Prior, Likelihood a Posterior pre dĺžku plutvy (Adelie)")
+```
+
+```{r ex819-CI, echo = FALSE}
+# 95% interval
+ci_95_lower <- qnorm(0.025, mean = mu_posteriorA, sd = sd_posteriorA)
+ci_95_upper <- qnorm(0.975, mean = mu_posteriorA, sd = sd_posteriorA)
+```
+
+**95% posteriórny kredibilný interval pre μ:**
+
+- $CI = (`r round(ci_95_lower, 2)`, `r round(ci_95_upper, 2)`)$
+- S 95%-nou pravdepodobnosťou je priemerná dĺžka plutvy v tomto intervale
+- na začiatku sme predpokladali, že dĺžka je medzi 140 a 260, teraz je to výrazne užšie
+- to je zjavne preto, že dát je dostatočne veľa a ich odchýlka je pomerne malá (6.5 mm)
+
+``` {r ex819-plot-CI, echo = FALSE}
+plot_normal(mean =mu_posteriorA, sd = sd_posteriorA) +
+  geom_vline(xintercept = c(ci_95_lower, ci_95_upper), 
+             linetype = "dashed", 
+             color = "red", 
+             alpha = 0.5) + 
+  labs(title = '95% CI pre posteriórny model pre dĺžku plutvy tučniakov Adelie',
+       subtitle = paste0('95% kredibilný interval: [', 
+                         round(ci_95_lower, 1), ', ', 
+                         round(ci_95_upper, 1), '] mm'),
+       x = 'μ (mm)', y = 'Hustota', color = 'Model')
+```
+
+# Exercise 8.20 (Tučniaky: testovanie hypotéz - Penguins: hypothesis testing)
+Riešenie cvičenia 8.20 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-8#exercises-7)
+
+> Let's continue our analysis of $\mu$, the typical flipper length (in mm) among the Adelie penguin species. <br>
+a. You hypothesize that the average Adelie flipper length is somewhere between 200mm and 220mm. State this as a formal hypothesis test (using $H_0$, $H_a$, and $\mu$ notation). <br> 
+NOTE: This is a two-sided hypothesis test! <br>
+b. What decision might you make about these hypotheses utilizing the credible interval from the previous exercise? <br>
+c. Calculate and interpret the posterior probability that your hypothesis is true. <br>
+d. Putting this together, explain your conclusion about $\mu$.
+
+## Riešenie:
+
+### a. Formulácia hypotéz
+
+Chceme otestovať, či priemerná dĺžka plutvy je medzi 200 a 220:
+
+\begin{split}
+H_0: & \; \; \mu \in (200, 220) \\
+H_a: & \; \; \mu < 200 \; \text{alebo} \; \mu > 220
+\end{split}
+
+### b. Rozhodnutie na základe kredibilného intervalu
+V predchádzajúcej úlohe sme zistili, že kredibilný interval  $CI = (`r round(ci_95_lower, 2)`, `r round(ci_95_upper, 2)`)$
+
+```{r ex820-b, echo = FALSE}
+# 95% kredibilný interval (červený)
+# Hranice hypotézy H0: (200, 220) (modrá)
+plot_normal(mean =mu_posteriorA, sd = sd_posteriorA) +
+  lims(x = c(170, 230)) +
+  geom_vline(xintercept = c(ci_95_lower, ci_95_upper), 
+             linetype = "dashed", 
+             color = "red", 
+             alpha = 0.5) + 
+  geom_vline(xintercept = c(200, 220), 
+             linetype = "dotted", 
+             color = "blue", 
+             alpha = 0.5) + 
+  labs(title = '95% CI pre posteriórny model pre dĺžku plutvy tučniakov Adelie',
+       subtitle = paste0('95% kredibilný interval: [', 
+                         round(ci_95_lower, 1), ', ', 
+                         round(ci_95_upper, 1), '] mm',
+                         '\nHypotéza H0: μ patri (200, 220) mm'),
+       x = 'μ (mm)', y = 'Hustota', color = 'Model')
+
+```
+
+> Celý 95%-ný CI leží mimo intervalu (200, 220) pre nulovú hypotézu. <br>
+> Hoci na začiatku sme v apriórnom modeli mali zahrnuté aj tieto hodnoty, na základe dát máme posteriórny model s veľmi úzkym CI, ktorý je celý pod hodnotou 200. Čiže táto hypotéza sa nepotvrdila. <br>
+> Tučniaky Adelie **nemajú plutvy** s priemernou dĺžkou medzi 200 a 220.
+
+### c. Posteriórna pravdepodobnosť
+Potrebujeme vypočítať pravdeopodobnosť, že hypotéza je pravdivá:
+
+- $P(H_0 | data) = P(200 < \mu < 220 | data)$
+
+```{r ex820-c, echo = FALSE}
+prob_H0 <- pnorm(220, mean = mu_posteriorA, sd = sd_posteriorA) - 
+           pnorm(200, mean = mu_posteriorA, sd = sd_posteriorA)
+
+```
+> Pravdepodobnosť, že platí nulová hypotéza je prakticky nulová: $P(200 < \mu < 220 | data) = `r prob_H0`$. <br>
+> Je veľmi nepravdepodobné, že by priemerná dĺžka bola v intervale (200, 220) <br>
+> S  pravdepodobnosťou $`r 1-prob_H0`$ platí alternatívna hypotéza, že stredná hodnota je mimo rozsah (200,220)
+
+### d. Záver
+
+> Na začiatku s apriórnym modelom N(`r theta`, `r tau`²) sme očakávali priemernú dĺžku plutvy okolo `r theta` mm s 95% intervalom okolo (140, 260) <br> 
+Pozorované dáta z `r adelie_n` tučniakov Adelie posunuli strednú hodnotu a výrazne zúžili smerodajnú odchýlku. <br>
+Priemerná dĺžka v našej vzorke bola len `r round(adelie_mean, 1)` mm. Po aktualizácii na posterior model $N(`r round(mu_posteriorA, 1)`, `r round(sd_posteriorA, 1)`^2)$ sa ukazuje, že priemerná dĺžka plutvy je s 95% pravdepodobnosťou v intervale $[`r round(ci_95_lower, 1)`, `r round(ci_95_upper, 1)`]$ mm. <br>
+**Testovanie hypotézy $H_0: \mu ∈ (200, 220)$:** <br>
+Tento posteriórny interval leží **celý pod** intervalom pre hypotézu $H_0$. Posteriórna pravdepodobnosť $P(H_0 | data) ≈ `r round(prob_H0 * 100, 4)`%$ je prakticky nulová. 
+
+> **Záver:** <br>
+Hypotézu $H_0$ **zamietame**. <br> 
+Existuje veľmi silný dôkaz, že priemerná dĺžka plutvy tučniakov Adelie je kratšia ako 200 mm. Najpravdepodobnejšie je okolo 190 mm.
+
+
+# Exercise 8.21 (Lunáci: odhad - Loons: estimation)
+Riešenie cvičenia 8.21 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-8#exercises-7)
+
+> The loon is a species of bird common to the Ontario region of Canada. Let $\lambda$ denote the typical number of loons observed by a birdwatcher across a 100-hour observation period. To learn about $\lambda$, we'll utilize bird counts $(Y_1,Y_2,\dots,Y_n)$ collected in $n$ different outings. <br>
+a. Explain which Bayesian model is appropriate for this analysis: Beta-Binomial, Gamma-Poisson, or Normal-Normal. <br>
+b. Your prior understanding is that the typical rate of loon sightings is 2 per 100 hours with a standard deviation of 1 per 100-hours. Specify an appropriate prior model for $\lambda$ and explain your reasoning. <br>
+c. The `loons` data in the bayesrules package contains loon counts in different 100-hour observation periods. How many data points do we have and what's the average loon count per 100 hours? <br>
+d. In light of your prior and data, calculate and interpret a (middle) 95% posterior credible interval for $\lambda$. NOTE: You'll first need to specify your posterior model of $\lambda$.
+
+## Riešenie:
+
+### a. Výber modelu
+
+```{r ex821-a, echo = FALSE}
+# Miesto pre odpoveď a
+```
+
+### b. Nastavenie apriórneho modelu
+
+```{r ex821-b, echo = FALSE}
+# Nastavenie Gamma priorového modelu pre λ
+```
+
+### c. Dáta
+
+```{r ex821-c, echo = FALSE}
+# Načítanie a spracovanie dát o lunákoch
+# data(loons)
+# n_loons <- nrow(loons)
+# mean_loons <- mean(loons$count)
+```
+
+### d. Posteriórny model a kredibilný interval
+
+```{r ex821-d, echo = FALSE}
+# Výpočet posteriórneho modelu
+# Výpočet 95% kredibilného intervalu
+```
+
+
+# Exercise 8.22 (Lunáci: testovanie hypotéz - Loons: hypothesis testing)
+Riešenie cvičenia 8.22 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-8#exercises-7)
+
+> Let's continue our loon analysis. <br>
+a. You hypothesize that birdwatchers should anticipate a rate of less than 1 loon per observation period. State this as a formal hypothesis test (using $H_0$, $H_a$, and $\lambda$ notation). <br>
+b. What decision might you make about these hypotheses utilizing the credible interval from the previous exercise? <br>
+c. Calculate and interpret the posterior probability that your hypothesis is true. <br>
+d. Putting this together, explain your conclusion about $\lambda$.
+
+## Riešenie:
+
+### a. Formulácia hypotéz
+
+```{r ex822-a, echo = FALSE}
+# Miesto pre formuláciu hypotéz
+```
+
+### b. Rozhodnutie na základe kredibilného intervalu
+
+```{r ex822-b, echo = FALSE}
+# Porovnanie s kredibilným intervalom z cvičenia 8.21
+```
+
+### c. Posteriórna pravdepodobnosť
+
+```{r ex822-c, echo = FALSE}
+# Výpočet posteriórnej pravdepodobnosti hypotézy
+```
+
+### d. Záver
+
+```{r ex822-d, echo = FALSE}
+# Záverečné zhrnutie o parametri λ
+```
+
+
+# Exercise 8.23 (Lunáci a MCMC: simulácia - Loons: MCMC simulation)
+Riešenie cvičenia 8.23 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-8#exercises-7)
+
+> Continue your loon analysis using MCMC simulation. <br>
+a. Simulate the posterior model of $\lambda$, the typical rate of loon sightings per observation period, with `rstan` using 4 chains and 10000 iterations per chain. <br>
+b. Perform some MCMC diagnostics to confirm that your simulation has stabilized. <br>
+c. Utilize your MCMC simulation to approximate a (middle) 95% posterior credible interval for $\lambda$. Do so using the `tidy()` shortcut function as well as a direct calculation from your chain values. <br>
+d. Utilize your MCMC simulation to approximate the posterior probability that $\lambda < 1$. <br>
+e. How close are the approximations in parts c and d to the actual corresponding posterior values you calculated in Exercises 8.21 and 8.22?
+
+## Riešenie:
+
+### a. MCMC simulácia
+
+```{r ex823-a, echo = FALSE, results='hide'}
+# STEP 1: DEFINE the model
+# loon_model <- "
+# data {
+#   int<lower=0> n;
+#   int<lower=0> y[n];
+# }
+# parameters {
+#   real<lower=0> lambda;
+# }
+# model {
+#   y ~ poisson(lambda);
+#   lambda ~ gamma(?, ?);  // doplniť parametre z cvičenia 8.21
+# }
+# "
+
+# STEP 2: SIMULATE the posterior
+# loon_sim <- stan(model_code = loon_model, 
+#                  data = list(n = n_loons, y = loons$count),
+#                  chains = 4, iter = 10000, seed = 84735)
+```
+
+### b. Diagnostika MCMC
+
+```{r ex823-b, echo = FALSE}
+# Trace plots
+# mcmc_trace(loon_sim, pars = "lambda", size = 0.5)
+
+# Density plots
+# mcmc_dens_overlay(loon_sim, pars = "lambda")
+
+# Autocorrelation plot
+# mcmc_acf(loon_sim, pars = "lambda")
+
+# R-hat a effective sample size
+```
+
+### c. Kredibilný interval z MCMC
+
+```{r ex823-c, echo = FALSE}
+# Použitie tidy()
+# tidy(loon_sim, conf.int = TRUE, conf.level = 0.95)
+
+# Priamy výpočet z chain values
+# loon_chains_df <- as.data.frame(loon_sim, pars = "lp__", include = FALSE)
+# loon_chains_df %>%
+#   summarize(lower_95 = quantile(lambda, 0.025),
+#             upper_95 = quantile(lambda, 0.975))
+```
+
+### d. Posteriórna pravdepodobnosť (MCMC aproximácia)
+
+```{r ex823-d, echo = FALSE}
+# loon_chains_df %>%
+#   mutate(less_than_1 = lambda < 1) %>%
+#   tabyl(less_than_1)
+```
+
+### e. Porovnanie s analytickými výsledkami
+
+```{r ex823-e, echo = FALSE}
+# Porovnanie MCMC aproximácií s presnou hodnotou z cvičenia 8.21 a 8.22
+```
+
+
+# Exercise 8.24 (Lunáci: predikcia - Loons: prediction)
+Riešenie cvičenia 8.24 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-8#exercises-7)
+
+> Use your MCMC simulation to make posterior predictions. <br>
+a. Use your MCMC simulation to approximate the posterior predictive model of $Y'$, the number of loons that a birdwatcher will spy in their next observation period. Construct a histogram visualization of this model. <br>
+b. Summarize your observations of the posterior predictive model of $Y'$. <br>
+c. Approximate the probability that the birdwatcher observes 0 loons in their next observation period.
+
+## Riešenie:
+
+### a. Posteriórny predikčný model
+
+```{r ex824-a, echo = FALSE}
+# set.seed(1)
+# loon_chains_df <- loon_chains_df %>%
+#   mutate(y_predict = rpois(length(lambda), lambda = lambda))
+
+# Histogram
+# ggplot(loon_chains_df, aes(x = y_predict)) +
+#   geom_histogram(binwidth = 1, fill = "steelblue", color = "black") +
+#   labs(title = "Posterior Predictive Distribution",
+#        x = "Number of loons (Y')",
+#        y = "Count") +
+#   theme_minimal()
+```
+
+### b. Popis posteriórneho predikčného modelu
+
+```{r ex824-b, echo = FALSE}
+# loon_chains_df %>%
+#   summarize(mean_predict = mean(y_predict),
+#             median_predict = median(y_predict),
+#             lower_80 = quantile(y_predict, 0.1),
+#             upper_80 = quantile(y_predict, 0.9))
+```
+
+### c. Pravdepodobnosť pozorovania 0 lunákov
+
+```{r ex824-c, echo = FALSE}
+# loon_chains_df %>%
+#   mutate(zero_loons = y_predict == 0) %>%
+#   tabyl(zero_loons)
+```
