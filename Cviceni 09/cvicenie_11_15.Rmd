@@ -1,0 +1,529 @@
+---
+title: "Cvicenie 11.15 - Bayesianska Regresia pre Perth Weather"
+subtitle: "Baesiánska analýza - Týden 11"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Zadanie
+
+**Exercise 11.15**: Pouzite data `weather_perth` z balicka `bayesrules` na vytvorenie "uspesneho" modelu poobednajsich teplot (`temp3pm`) v Perth, Australia. Mozete si vybrat, ktore prediktory pouzijete a ci zahrnute interakcne cleny. Nezabudnite vyhodnotit vas model a vysvetlit proces modelovania.
+
+# Teoreticky Uvod
+
+## Multivariabilna Bayesianska Normalna Regresia
+
+Pre kvantitativnu odpoved $Y$ a mnozinu $p$ prediktorov $(X_1, X_2, \ldots, X_p)$ ma multivariabilny Bayesianov normalny regresny model nasledujucu strukturu:
+
+$$
+\begin{aligned}
+\text{Data:} \quad Y_i | \beta_0, \beta_1, \ldots, \beta_p, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\text{kde} \quad \mu_i &= \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \cdots + \beta_p X_{ip}
+\end{aligned}
+$$
+
+## Priory pre parametre
+
+$$
+\begin{aligned}
+\beta_{0c} &\sim N(m_0, s_0^2) \\
+\beta_j &\sim N(0, s_j^2) \quad \text{pre } j = 1, \ldots, p \\
+\sigma &\sim \text{Exp}(l)
+\end{aligned}
+$$
+
+## Interpretacia koeficientov
+
+- **$\beta_0$** (Intercept): Typicka hodnota $Y$ ked vsetky prediktory su 0
+- **$\beta_j$ pre kvantitativny prediktor**: Typicka zmena v $Y$ pri jednotkovom naraste $X_j$, pri kontrole ostatnych prediktorov
+- **$\beta_j$ pre kategoricky prediktor**: Typicky rozdiel v $Y$ medzi danou kategoriu a referencnou kategoriu
+- **$\sigma$**: Standardna odchylka rezidui
+
+## Bias-Variance Trade-off
+
+Pri budovani modelu hladame rovnovahu:
+
+- **Prilis jednoduchy model** (malo prediktorov): Vysoky bias, nizka variancia
+- **Prilis zlozity model** (vela prediktorov): Nizky bias, vysoka variancia (overfitting)
+
+# Nacitanie Balickov a Dat
+
+```{r packages}
+# Nacitanie potrebnych balickov
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(broom.mixed)
+library(tidybayes)
+library(patchwork)
+
+# Nacitanie dat
+data(weather_perth)
+```
+
+# Prieskumna Analyza Dat (EDA)
+
+## Struktura dat
+
+```{r data-structure}
+# load data
+data(weather_perth)
+
+# Prehlad dat
+glimpse(weather_perth)
+```
+
+```{r data-summary}
+# Zakladne statistiky
+summary(weather_perth)
+```
+
+## Dostupne premenne
+
+```{r variables}
+# Zoznam premennych
+names(weather_perth)
+```
+
+## Vizualizacia odpovede
+
+```{r response-viz, fig.width=10, fig.height=4}
+# Rozdelenie temp3pm
+p1 <- ggplot(weather_perth, aes(x = temp3pm)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white", alpha = 0.7) +
+  labs(title = "Rozdelenie poobednajsich teplot",
+       x = "Teplota o 15:00 (°C)", y = "Frekvencia") +
+  theme_minimal()
+
+p2 <- ggplot(weather_perth, aes(y = temp3pm)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  labs(title = "Boxplot temp3pm",
+       y = "Teplota o 15:00 (°C)") +
+  theme_minimal()
+
+p1 + p2
+```
+
+## Vztahy medzi premennymi
+
+```{r relationships-quant, fig.width=12, fig.height=8}
+# Vztahy s kvantitativnymi prediktormi
+weather_perth %>%
+  select(temp3pm, temp9am, humidity9am, pressure9am, windspeed9am) %>%
+  pivot_longer(cols = -temp3pm, names_to = "prediktor", values_to = "hodnota") %>%
+  ggplot(aes(x = hodnota, y = temp3pm)) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_smooth(method = "lm", se = FALSE, color = "darkred") +
+  facet_wrap(~prediktor, scales = "free_x") +
+  labs(title = "Vztah temp3pm s kvantitativnymi prediktormi",
+       x = "Hodnota prediktora", y = "Teplota o 15:00 (°C)") +
+  theme_minimal()
+```
+
+## Korelacna matica
+
+```{r correlation}
+# Korelacna matica pre kvantitativne premenne
+weather_perth %>%
+  select(temp3pm, temp9am, humidity9am, pressure9am, windspeed9am) %>%
+  cor(use = "complete.obs") %>%
+  round(3)
+```
+
+# Strategia Modelovania
+
+Na zaklade EDA volim nasledujuci pristup:
+
+1. **Model 1**: Jednoduchy model s `temp9am` (najsilnejsia korelacia)
+2. **Model 2**: Model s `temp9am` a `humidity9am`
+3. **Model 3**: Plny model so vsetkymi dostupnymi prediktormi
+4. Porovnanie modelov pomocou cross-validacie a ELPD
+
+## Prior Specifikacia
+
+Vychadzam z nasledujuceho predporozumenia:
+
+- Typicka poobednasjia teplota v Perth je niekde medzi 15 a 35°C (stredna hodnota ~25°C)
+- Pouzijeme weakly informative priory pre ostatne parametre
+
+$$
+\begin{aligned}
+\beta_{0c} &\sim N(25, 5^2) \\
+\beta_j &\sim N(0, 2.5^2) \quad \text{(autoscaled)} \\
+\sigma &\sim \text{Exp}(1) \quad \text{(autoscaled)}
+\end{aligned}
+$$
+
+# Model 1: Jednoduchy Model (temp9am)
+
+## Specifikacia modelu
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 \cdot \text{temp9am}_i
+\end{aligned}
+$$
+
+## Simulacia posterioru
+
+```{r model1}
+set.seed(84735)
+model_1 <- stan_glm(
+  temp3pm ~ temp9am,
+  data = weather_perth,
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0
+)
+
+prior_summary(model_1)
+```
+
+## MCMC Diagnostika
+### Trace plots
+```{r model1-diag, fig.width=12, fig.height=4}
+mcmc_trace(model_1, size = 0.1) + 
+  labs(title = "Model 1: Trace Plots")
+```
+### Density overlay
+```{r model1-diag2, fig.width=10, fig.height=3}
+mcmc_dens_overlay(model_1) +
+  labs(title = "Model 1: Posterior Density Plots")
+```
+### Autokorelace
+```{r model1-acf}
+mcmc_acf(model_1)
+```
+
+### R-hat
+```{r model1-rhat}
+rhat(model_1)
+```
+
+### ESS - Effective sample size ratio
+```{r model1-neff}
+neff_ratio(model_1)
+```
+
+## Posterior Summary
+
+```{r model1-summary}
+# Posterior summary
+tidy(model_1, effects = c("fixed", "aux"), 
+     conf.int = TRUE, conf.level = 0.80) %>%
+  select(-std.error)
+```
+
+## Posterior credible intervals
+```{r}
+posterior_interval(model_1, prob = 0.80)
+```
+## Posterior predictive check
+```{r}
+pp_check(model_1)
+```
+## Interpretacia Model 1
+
+- **Intercept ($\beta_0$)**: Ked je ranna teplota 0°C, ocakavana poobednasjia teplota
+- **temp9am ($\beta_1$)**: Za kazdy 1°C narast rannej teploty sa poobednasjia teplota zvysi priblizne o tento koeficient
+
+# Model 2: Dva Prediktory (temp9am + humidity9am)
+
+## Specifikacia modelu
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \beta_2, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 \cdot \text{temp9am}_i + \beta_2 \cdot \text{humidity9am}_i
+\end{aligned}
+$$
+
+## Simulacia posterioru
+
+```{r model2}
+model_2 <- stan_glm(
+  temp3pm ~ temp9am + humidity9am,
+  data = weather_perth,
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0
+)
+```
+
+## MCMC Diagnostika
+
+```{r model2-diag}
+# R-hat
+cat("Model 2 R-hat hodnoty:\n")
+rhat(model_2)
+
+cat("\nModel 2 ESS Ratios:\n")
+neff_ratio(model_2)
+```
+
+## Posterior Summary
+
+```{r model2-summary}
+tidy(model_2, effects = c("fixed", "aux"), 
+     conf.int = TRUE, conf.level = 0.80) %>%
+  select(-std.error)
+```
+
+## Interpretacia Model 2
+
+Pri kontrole ostatnych prediktorov:
+
+- **temp9am**: Pozitivny vztah s poobednajsiou teplotou
+- **humidity9am**: Negativny vztah (vyssia vlhkost = nizsia teplota)
+
+# Model 3: Plny Model
+
+## Specifikacia modelu
+
+$$
+\begin{aligned}
+\mu_i &= \beta_0 + \beta_1 \cdot \text{temp9am}_i + \beta_2 \cdot \text{humidity9am}_i + \beta_3 \cdot \text{pressure9am}_i + \beta_4 \cdot \text{windspeed9am}_i
+\end{aligned}
+$$
+
+## Simulacia posterioru
+
+```{r model3}
+set.seed(84735)
+model_3 <- stan_glm(
+  temp3pm ~ temp9am + humidity9am + pressure9am + windspeed9am,
+  data = weather_perth,
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0
+)
+```
+
+## MCMC Diagnostika
+
+```{r model3-diag}
+cat("Model 3 R-hat hodnoty:\n")
+rhat(model_3)
+
+cat("\nModel 3 ESS Ratios:\n")
+neff_ratio(model_3)
+```
+
+## Posterior Summary
+
+```{r model3-summary}
+tidy(model_3, effects = c("fixed", "aux"), 
+     conf.int = TRUE, conf.level = 0.80) %>%
+  select(-std.error)
+```
+
+## 95% Credible Intervals
+
+```{r model3-ci}
+posterior_interval(model_3, prob = 0.95)
+```
+
+## Interpretacia Model 3
+
+Pri kontrole ostatnych prediktorov a na zaklade 95% kredibilnych intervalov:
+
+- **temp9am**: Signifikantne pozitivny vztah (interval celkom nad 0)
+- **humidity9am**: Signifikantne negativny vztah (interval celkom pod 0)
+- **pressure9am**: Nesignifikantny (interval obsahuje 0)
+- **windspeed9am**: Nesignifikantny (interval obsahuje 0)
+
+# Posterior Predictive Checks
+
+```{r ppc, fig.width=12, fig.height=4}
+# PP checks pre vsetky modely
+p1 <- pp_check(model_1) + labs(title = "Model 1: temp9am")
+p2 <- pp_check(model_2) + labs(title = "Model 2: temp9am + humidity")
+p3 <- pp_check(model_3) + labs(title = "Model 3: Plny model")
+
+p1 + p2 + p3
+```
+
+# Porovnanie Modelov
+
+## Cross-Validation (10-fold)
+
+```{r cv, cache=TRUE}
+set.seed(84735)
+
+# Odstranenie NA hodnot pre cross-validaciu
+weather_complete <- weather_perth %>%
+  select(temp3pm, temp9am, humidity9am, pressure9am, windspeed9am) %>%
+  na.omit()
+
+# Cross-validation pre kazdy model
+cv_1 <- prediction_summary_cv(model = model_1, data = weather_complete, k = 10)
+cv_2 <- prediction_summary_cv(model = model_2, data = weather_complete, k = 10)
+cv_3 <- prediction_summary_cv(model = model_3, data = weather_complete, k = 10)
+```
+
+```{r cv-results}
+# Porovnanie vysledkov
+cv_comparison <- data.frame(
+  Model = c("Model 1 (temp9am)", 
+            "Model 2 (temp9am + humidity)", 
+            "Model 3 (plny)"),
+  MAE = c(cv_1$cv$mae, cv_2$cv$mae, cv_3$cv$mae),
+  MAE_scaled = c(cv_1$cv$mae_scaled, cv_2$cv$mae_scaled, cv_3$cv$mae_scaled),
+  Within_50 = c(cv_1$cv$within_50, cv_2$cv$within_50, cv_3$cv$within_50),
+  Within_95 = c(cv_1$cv$within_95, cv_2$cv$within_95, cv_3$cv$within_95)
+)
+
+knitr::kable(cv_comparison, digits = 3,
+             caption = "Porovnanie Cross-Validated Prediction Metrics")
+```
+
+## ELPD Porovnanie
+
+```{r elpd}
+set.seed(84735)
+loo_1 <- loo(model_1)
+loo_2 <- loo(model_2)
+loo_3 <- loo(model_3)
+
+# ELPD hodnoty
+cat("ELPD hodnoty:\n")
+cat("Model 1:", loo_1$estimates[1], "\n")
+cat("Model 2:", loo_2$estimates[1], "\n")
+cat("Model 3:", loo_3$estimates[1], "\n")
+```
+
+```{r elpd-compare}
+# Formalne porovnanie
+loo_compare(loo_1, loo_2, loo_3)
+```
+
+## Interpretacia ELPD porovnania
+
+ELPD (Expected Log Predictive Density) porovnanie:
+
+- Modely su zoradene od najlepsieho (najvyssie ELPD) po najhorsie
+- Rozdiel `elpd_diff` ukazuje, o kolko je model horsi ako najlepsi
+- Ak je `|elpd_diff| < 2 * se_diff`, rozdiel nie je signifikantny
+
+# Zaver a Vyber Modelu
+
+## Suhrn vysledkov
+
+```{r final-summary}
+# Finalny suhrn
+cat("=== SUHRN POROVNANIA MODELOV ===\n\n")
+
+cat("Cross-validated MAE:\n")
+cat("Model 1:", round(cv_1$cv$mae, 3), "°C\n")
+cat("Model 2:", round(cv_2$cv$mae, 3), "°C\n")
+cat("Model 3:", round(cv_3$cv$mae, 3), "°C\n\n")
+
+cat("ELPD hodnoty:\n")
+cat("Model 1:", round(loo_1$estimates[1], 1), "\n")
+cat("Model 2:", round(loo_2$estimates[1], 1), "\n")
+cat("Model 3:", round(loo_3$estimates[1], 1), "\n")
+```
+
+## Odporucany Model
+
+Na zaklade analyzy odporucam **Model 2** (temp9am + humidity9am) z nasledujucich dovodov:
+
+1. **Prediktivna presnost**: Podobna alebo lepsia ako plny model
+2. **Parsimonia**: Jednoduchsi model s menej parametrami
+3. **Interpretovatelnost**: Jasna interpretacia oboch koeficientov
+4. **Bias-Variance Trade-off**: Dobra rovnovaha medzi biasom a varianciou
+
+## Finalny Model - Posterior Summary
+
+```{r final-model}
+# Detailny suhrn vybraneho modelu
+cat("=== FINALNY MODEL: temp3pm ~ temp9am + humidity9am ===\n\n")
+
+tidy(model_2, effects = c("fixed", "aux"), 
+     conf.int = TRUE, conf.level = 0.95) %>%
+  select(-std.error) %>%
+  knitr::kable(digits = 3, caption = "Posterior Summary - 95% CI")
+```
+
+## Posterior Median Model Equation
+
+Na zaklade posteriornych median hodnot:
+
+$$
+\widehat{\text{temp3pm}} = \hat{\beta}_0 + \hat{\beta}_1 \cdot \text{temp9am} + \hat{\beta}_2 \cdot \text{humidity9am}
+$$
+
+```{r equation}
+coefs <- tidy(model_2)$estimate[1:3]
+cat(sprintf("temp3pm = %.2f + %.3f * temp9am + %.4f * humidity9am\n", 
+            coefs[1], coefs[2], coefs[3]))
+```
+
+## Posterior Predikcna Vizualizacia
+
+```{r prediction-viz, fig.width=10, fig.height=5}
+# Predikcie pre rozne scenare
+new_data <- expand.grid(
+  temp9am = seq(10, 30, by = 5),
+  humidity9am = c(40, 60, 80)
+)
+
+predictions <- posterior_predict(model_2, newdata = new_data)
+
+pred_summary <- new_data %>%
+  mutate(
+    pred_mean = colMeans(predictions),
+    pred_lower = apply(predictions, 2, quantile, 0.1),
+    pred_upper = apply(predictions, 2, quantile, 0.9),
+    humidity_level = factor(humidity9am, labels = c("Nizka (40%)", "Stredna (60%)", "Vysoka (80%)"))
+  )
+
+ggplot(pred_summary, aes(x = temp9am, y = pred_mean, color = humidity_level)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = humidity_level), 
+              alpha = 0.2, color = NA) +
+  labs(title = "Posterior Predikcie: temp3pm podla temp9am a humidity9am",
+       subtitle = "Ciara = posterior mean, pasmo = 80% kredibilny interval",
+       x = "Ranna teplota (°C)", 
+       y = "Predikovana poobednasjia teplota (°C)",
+       color = "Vlhkost", fill = "Vlhkost") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+# Zaverecne Poznamky
+
+## Proces modelovania
+
+1. **EDA**: Preskumanie dat a identifikacia potencialnych prediktorov
+2. **Prior specifikacia**: Weakly informative priory na zaklade predporozumenia
+3. **Postupne budovanie**: Od jednoduchych k zlozitejsim modelom
+4. **MCMC diagnostika**: Overenie konvergencie pre kazdy model
+5. **Porovnanie modelov**: Cross-validacia a ELPD
+6. **Vyber modelu**: Rovnovaha medzi presnostou a jednoduchostou
+
+## Hlavne zistenia
+
+- **temp9am** je najsilnejsim prediktorom poobednajsej teploty
+- **humidity9am** pridava uzitocnu informaciu pri kontrole rannej teploty
+- **pressure9am** a **windspeed9am** neprinasaju signifikantne zlepsenie

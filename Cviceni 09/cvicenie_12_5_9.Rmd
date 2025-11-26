@@ -1,0 +1,519 @@
+---
+title: "Cvicenia 12.5-12.9 - Poisson a Negative Binomial Regresia"
+author: "Dana"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Uvod
+
+Tieto cvicenia pouzivaju data `bald_eagles` z balicka `bayesrules`, ktore obsahuju udaje o pozorovaniach orlov bielohlavych (bald eagles) pocas 37 roznych jednotyzdnovych pozorovacich obdobi.
+
+# Teoreticky Uvod
+
+## Preco Poisson/Negative Binomial namiesto Normalnej regresie?
+
+Ked je odpoved $Y$ **pocet udalosti** (count variable):
+
+- $Y \in \{0, 1, 2, \ldots\}$ - diskretne, nezaporne hodnoty
+- Casto prave sikme rozdelenie
+- Normalna regresia predpoklada, ze $Y$ moze byt zaporne - **nespravne!**
+
+## Poisson Regresia
+
+### Struktura modelu
+
+$$
+Y_i | \beta_0, \beta_1, \ldots, \beta_p \stackrel{ind}{\sim} \text{Pois}(\lambda_i)
+$$
+
+kde pouzivame **log link funkciu**:
+
+$$
+\log(\lambda_i) = \beta_0 + \beta_1 X_{i1} + \cdots + \beta_p X_{ip}
+$$
+
+Ekvivalentne:
+
+$$
+\lambda_i = e^{\beta_0 + \beta_1 X_{i1} + \cdots + \beta_p X_{ip}}
+$$
+
+### Interpretacia koeficientov
+
+- **$e^{\beta_0}$**: Ocakavany pocet $Y$ ked vsetky prediktory su 0
+- **$e^{\beta_j}$**: **Multiplikativna zmena** v ocakavanom pocte $Y$ pri jednotkovom naraste $X_j$
+
+Napriklad, ak $\beta_1 = 0.03$, potom $e^{0.03} = 1.03$, co znamena 3% narast v $Y$ za kazdu jednotku $X_1$.
+
+### Predpoklady Poissonovej regresie
+
+1. **Nezavislost dat** - pozorovania su nezavisle
+2. **$Y$ je pocet** - diskretny, nezaporny
+3. **Log-linearny vztah** - $\log(\lambda)$ je linearna kombinacia prediktorov
+4. **Rovnost priemeru a variancie**: $E(Y|\lambda) = \text{Var}(Y|\lambda) = \lambda$
+
+## Negative Binomial Regresia
+
+### Problem: Overdisperzia
+
+Ked je variancia $Y$ **vacsia** ako ocakavana podla Poissonovho modelu, hovorime o **overdisperzii**:
+
+$$
+\text{Var}(Y) > E(Y)
+$$
+
+### Negative Binomial ako riesenie
+
+$$
+Y_i | \mu_i, r \sim \text{NegBin}(\mu_i, r)
+$$
+
+kde:
+- $\mu_i$ je parameter priemeru
+- $r > 0$ je **reciprocny disperzny parameter**
+
+Pre Negative Binomial plati:
+
+$$
+E(Y|\mu, r) = \mu \quad \text{a} \quad \text{Var}(Y|\mu, r) = \mu + \frac{\mu^2}{r}
+$$
+
+**Porovnanie s Poissonom:**
+
+- Ked $r \to \infty$: $\text{Var}(Y) \approx E(Y)$ (podobne ako Poisson)
+- Ked $r$ je male: $\text{Var}(Y) > E(Y)$ (overdisperzia)
+
+# Nacitanie Balickov a Dat
+
+```{r packages}
+# Nacitanie balickov
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(broom.mixed)
+library(tidybayes)
+
+# Nacitanie dat
+data(bald_eagles)
+```
+
+# Exercise 12.5: Prieskum Dat (EDA)
+
+## a) Univariatna vizualizacia count
+
+```{r ex12-5a}
+# Histogram poctu pozorovani orlov
+ggplot(bald_eagles, aes(x = count)) +
+  geom_histogram(bins = 15, fill = "steelblue", color = "white", alpha = 0.7) +
+  labs(title = "Rozdelenie poctu pozorovani orlov bielohlavych",
+       x = "Pocet pozorovani (count)",
+       y = "Frekvencia") +
+  theme_minimal()
+```
+
+**Komentar:** Rozdelenie poctu pozorovani orlov je prave sikme (right-skewed), co je typicke pre count data. Vacsina pozorovacich obdobi zaznamenala relativne nizky pocet orlov, ale niekolko obdobi malo vyrazne vyssie pocty.
+
+## b) Vztah count vs year
+
+```{r ex12-5b}
+# Scatterplot count vs year
+ggplot(bald_eagles, aes(x = year, y = count)) +
+  geom_point(size = 2, color = "steelblue") +
+  geom_smooth(method = "lm", se = FALSE, color = "darkred") +
+  labs(title = "Pocet pozorovani orlov v case",
+       x = "Rok",
+       y = "Pocet pozorovani") +
+  theme_minimal()
+```
+
+**Komentar:** Vidime pozitivny trend - pocet pozorovani orlov sa casom zvysuje. To moze naznacovat zotavovanie populacie orlov bielohlavych.
+
+## c) Zohladnenie dlzky pozorovania (hours)
+
+```{r ex12-5c}
+# Overenie rozsahu hours
+summary(bald_eagles$hours)
+
+# Vizualizacia s velkostou bodu podla hours
+ggplot(bald_eagles, aes(x = year, y = count, size = hours)) +
+  geom_point(alpha = 0.6, color = "steelblue") +
+  scale_size_continuous(name = "Pozorovacie\nhodiny") +
+  labs(title = "Pocet pozorovani orlov v case (velkost = dlzka pozorovania)",
+       x = "Rok",
+       y = "Pocet pozorovani") +
+  theme_minimal()
+```
+
+**Komentar:** Dlzka pozorovacich obdobi sa lisi (od cca 134 do 249 hodin). Dlhsie pozorovacie obdobia prirodzene vedú k vyssim poctom pozorovani. Je dolezite kontrolovat tuto premennu v modeli, aby sme mohli spravne interpretovat casovy trend.
+
+# Exercise 12.6: Normalna Regresia
+
+## a) Simulacia posterioru
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \beta_2, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 \cdot \text{year}_i + \beta_2 \cdot \text{hours}_i
+\end{aligned}
+$$
+
+```{r ex12-6a}
+# Normalna regresia
+normal_model <- stan_glm(
+  count ~ year + hours,
+  data = bald_eagles,
+  family = gaussian,
+  prior_intercept = normal(0, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0
+)
+
+# Prior summary
+prior_summary(normal_model)
+```
+
+## b) Uplna Bayesianova struktura modelu
+
+$$
+\begin{aligned}
+\text{Data:} \quad Y_i | \beta_0, \beta_1, \beta_2, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2}
+\end{aligned}
+$$
+
+kde $X_{i1} = \text{year}_i$ a $X_{i2} = \text{hours}_i$.
+
+**Priory** (weakly informative, autoscaled):
+
+$$
+\begin{aligned}
+\beta_{0c} &\sim N(0, s_0^2) \\
+\beta_1 &\sim N(0, s_1^2) \\
+\beta_2 &\sim N(0, s_2^2) \\
+\sigma &\sim \text{Exp}(l)
+\end{aligned}
+$$
+
+## c) Posterior Predictive Check
+
+```{r ex12-6c}
+pp_check(normal_model, plotfun = "hist", nreps = 5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Normalna regresia: Posterior Predictive Check",
+       x = "count")
+```
+
+**Komentar:** Model **NIE JE dobry** z nasledujucich dovodov:
+
+1. **Zaporne hodnoty**: Normalna regresia predpovedá záporné počty orlov, čo je nemožné
+2. **Symetricke rozdelenie**: Simulovane data su symetricke, zatial co skutocne data su prave sikme
+3. **Nespravna struktura**: Count data by mali byt modelovane Poissonovou alebo Negative Binomial regresiou
+
+# Exercise 12.7: Poisson Regresia
+
+## a) Preco Poisson?
+
+Poisson regresia je vhodnejsia pretoze:
+
+- **Count data**: $Y$ je pocet (nezaporne cele cislo)
+- **Log link**: Zabranuje zapornym predikciam
+- **Prave sikme rozdelenie**: Poisson prirodzene modeluje sikme data
+
+## b) Simulacia posterioru
+
+```{r ex12-7b}
+# Poisson regresia
+poisson_model <- stan_glm(
+  count ~ year + hours,
+  data = bald_eagles,
+  family = poisson,
+  prior_intercept = normal(0, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0
+)
+
+# Prior summary
+prior_summary(poisson_model)
+```
+
+## c) Uplna Bayesianova struktura Poissonovho modelu
+
+$$
+\begin{aligned}
+\text{Data:} \quad Y_i | \beta_0, \beta_1, \beta_2 &\stackrel{ind}{\sim} \text{Pois}(\lambda_i) \\
+\log(\lambda_i) &= \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2}
+\end{aligned}
+$$
+
+Ekvivalentne:
+
+$$
+\lambda_i = e^{\beta_0 + \beta_1 \cdot \text{year}_i + \beta_2 \cdot \text{hours}_i}
+$$
+
+**Priory:**
+
+$$
+\begin{aligned}
+\beta_{0c} &\sim N(0, s_0^2) \\
+\beta_1 &\sim N(0, s_1^2) \\
+\beta_2 &\sim N(0, s_2^2)
+\end{aligned}
+$$
+
+## d) Posterior Predictive Check
+
+```{r ex12-7d}
+pp_check(poisson_model, plotfun = "hist", nreps = 5) +
+  labs(title = "Poisson regresia: Posterior Predictive Check",
+       x = "count")
+```
+
+```{r ex12-7d2}
+# Density pp_check
+pp_check(poisson_model) +
+  labs(title = "Poisson regresia: Posterior Predictive Check (density)")
+```
+
+**Komentar:** Poisson model je **lepsí** ako Normalna regresia:
+
+- Ziadne zaporne hodnoty
+- Prave sikme rozdelenie
+
+Avsak mozu byt problemy s **overdisperziou** - ak je variancia v datach vacsia ako ocakavana podla Poissonovho modelu.
+
+# Exercise 12.8: Negative Binomial Regresia
+
+## a) Simulacia posterioru a pp_check
+
+```{r ex12-8a}
+# Negative Binomial regresia
+negbin_model <- stan_glm(
+  count ~ year + hours,
+  data = bald_eagles,
+  family = neg_binomial_2,
+  prior_intercept = normal(0, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0
+)
+
+# Posterior predictive check
+pp_check(negbin_model, plotfun = "hist", nreps = 5) +
+  labs(title = "Negative Binomial regresia: Posterior Predictive Check",
+       x = "count")
+```
+
+```{r ex12-8a2}
+pp_check(negbin_model) +
+  labs(title = "Negative Binomial: PP Check (density)")
+```
+
+**Komentar:** Negative Binomial model dobre zachytava strukturu dat a je vhodny pre analyzu.
+
+## b) Uplna Bayesianova struktura Negative Binomial modelu
+
+$$
+\begin{aligned}
+\text{Data:} \quad Y_i | \beta_0, \beta_1, \beta_2, r &\stackrel{ind}{\sim} \text{NegBin}(\mu_i, r) \\
+\log(\mu_i) &= \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2}
+\end{aligned}
+$$
+
+kde:
+- $X_{i1} = \text{year}_i$
+- $X_{i2} = \text{hours}_i$
+- $r$ je reciprocny disperzny parameter
+
+**Priory:**
+
+$$
+\begin{aligned}
+\beta_{0c} &\sim N(0, s_0^2) \\
+\beta_1 &\sim N(0, s_1^2) \\
+\beta_2 &\sim N(0, s_2^2) \\
+r &\sim \text{Exp}(1)
+\end{aligned}
+$$
+
+**Vlastnosti Negative Binomial:**
+
+$$
+E(Y|\mu, r) = \mu \quad \text{a} \quad \text{Var}(Y|\mu, r) = \mu + \frac{\mu^2}{r}
+$$
+
+## c) Interpretacia koeficientov (unlogged scale)
+
+```{r ex12-8c}
+# Posterior summary
+tidy(negbin_model, conf.int = TRUE, conf.level = 0.80)
+```
+
+```{r ex12-8c-interpret}
+# Ziskanie posterior medianov
+coefs <- tidy(negbin_model)$estimate
+
+# Interpretacia na unlogged scale
+cat("=== INTERPRETACIA KOEFICIENTOV ===\n\n")
+
+cat("Koeficient pre YEAR:\n")
+cat("  beta_1 =", round(coefs[2], 4), "\n")
+cat("  exp(beta_1) =", round(exp(coefs[2]), 4), "\n")
+cat("  Interpretacia: Za kazdy rok sa ocakavany pocet pozorovani orlov\n")
+cat("  nasobi faktorom", round(exp(coefs[2]), 4), 
+    ", t.j. zvysuje o", round((exp(coefs[2])-1)*100, 2), "%\n\n")
+
+cat("Koeficient pre HOURS:\n")
+cat("  beta_2 =", round(coefs[3], 4), "\n")
+cat("  exp(beta_2) =", round(exp(coefs[3]), 4), "\n")
+cat("  Interpretacia: Za kazdu dodatocnu hodinu pozorovania\n")
+cat("  sa ocakavany pocet pozorovani nasobi faktorom", round(exp(coefs[3]), 4), 
+    ", t.j. zvysuje o", round((exp(coefs[3])-1)*100, 2), "%\n")
+```
+
+## d) 95% Posterior Credible Interval pre year
+
+```{r ex12-8d}
+# 95% CI pre year
+posterior_interval(negbin_model, prob = 0.95, pars = "year")
+```
+
+```{r ex12-8d-interpret}
+# Na unlogged scale
+ci_year <- posterior_interval(negbin_model, prob = 0.95, pars = "year")
+cat("95% CI pre year koeficient:\n")
+cat("  Na log scale: [", round(ci_year[1], 4), ",", round(ci_year[2], 4), "]\n")
+cat("  Na unlogged scale (multiplikativna zmena): [", 
+    round(exp(ci_year[1]), 4), ",", round(exp(ci_year[2]), 4), "]\n")
+```
+
+## e) Evidencia o casovom trende
+
+```{r ex12-8e}
+# Overenie ci 0 je v 95% CI
+if (ci_year[1] > 0) {
+  cat("ANO - Mame dostatocnu evidenciu, ze miera pozorovani orlov\n")
+  cat("sa v case zvysuje (pri kontrole poctu pozorovacich hodin).\n\n")
+  cat("Cely 95% kredibilny interval pre koeficient 'year' je nad 0.\n")
+} else {
+  cat("NIE - Nemame dostatocnu evidenciu o casovom trende.\n")
+}
+```
+
+# Exercise 12.9: Hodnotenie Modelu
+
+## a) Ako fair je model?
+
+```{r ex12-9a}
+cat("=== FAIRNESS HODNOTENIE ===\n\n")
+cat("1. Data collection: Data su z oficialnych pozorovani, bez zjavneho biasu\n")
+cat("2. Reprezentativnost: Pokryva 37 pozorovacich obdobi\n")
+cat("3. Potencialne problemy:\n")
+cat("   - Geograficka obmedzenost (len urcite lokality)\n")
+cat("   - Sezonne variácie (nie su explicitne modelovane)\n")
+```
+
+## b) Ako wrong je model?
+
+```{r ex12-9b}
+# Porovnanie pp_check pre vsetky tri modely
+cat("=== MODEL WRONGNESS (pp_check porovnanie) ===\n\n")
+cat("1. Normalna regresia: ZLA - predpovedá záporné hodnoty\n")
+cat("2. Poisson regresia: LEPSIA - ale možná overdisperzia\n")
+cat("3. Negative Binomial: NAJLEPSIA - flexibilná pre overdisperzné data\n")
+```
+
+## c) Ako presne su predikcie modelu?
+
+```{r ex12-9c}
+# Predikcie pre kazde pozorovanie
+set.seed(84735)
+predictions <- posterior_predict(negbin_model, newdata = bald_eagles)
+
+# Vizualizacia
+ppc_intervals(bald_eagles$count, yrep = predictions,
+              x = bald_eagles$year,
+              prob = 0.5, prob_outer = 0.95) +
+  labs(title = "Posterior Prediktivne Intervaly",
+       x = "Rok", y = "Pocet pozorovani orlov")
+```
+
+```{r ex12-9c2}
+# Prediction summary
+prediction_summary(model = negbin_model, data = bald_eagles)
+```
+
+```{r ex12-9c-cv}
+# Cross-validation
+set.seed(84735)
+cv_results <- prediction_summary_cv(model = negbin_model, data = bald_eagles, k = 10)
+cv_results
+```
+
+# Porovnanie Modelov pomocou ELPD
+
+```{r elpd}
+set.seed(84735)
+loo_normal <- loo(normal_model)
+loo_poisson <- loo(poisson_model)
+loo_negbin <- loo(negbin_model)
+
+# ELPD hodnoty
+cat("ELPD hodnoty:\n")
+cat("Normal model:", loo_normal$estimates[1], "\n")
+cat("Poisson model:", loo_poisson$estimates[1], "\n")
+cat("Negative Binomial model:", loo_negbin$estimates[1], "\n")
+```
+
+```{r elpd-compare}
+# Formalne porovnanie
+loo_compare(loo_normal, loo_poisson, loo_negbin)
+```
+
+# Zaver
+
+## Suhrn Modelov
+
+| Model | Family | Formula | Vhodnost |
+|-------|--------|---------|----------|
+| Normal | `gaussian` | $\mu_i = \beta_0 + \beta_1 X_1 + \beta_2 X_2$ | Nevhodny (zaporne predikcie) |
+| Poisson | `poisson` | $\log(\lambda_i) = \beta_0 + \beta_1 X_1 + \beta_2 X_2$ | Lepsi, ale overdisperzia |
+| Neg. Binomial | `neg_binomial_2` | $\log(\mu_i) = \beta_0 + \beta_1 X_1 + \beta_2 X_2$ | Najlepsi |
+
+## Hlavne Zistenia
+
+1. **Pocet pozorovani orlov sa v case zvysuje** - signifikantny pozitivny trend
+2. **Dlhsie pozorovacie obdobia** vedú k vyssim poctom pozorovani
+3. **Negative Binomial** je najvhodnejsi model pre tieto overdisperzne count data
+
+## Posteriorny Median Model
+
+```{r final-model}
+cat("=== FINALNY MODEL (Negative Binomial) ===\n\n")
+coefs <- tidy(negbin_model)$estimate
+
+cat("log(mu) =", round(coefs[1], 2), "+", round(coefs[2], 4), "* year +", 
+    round(coefs[3], 4), "* hours\n\n")
+
+cat("Alebo ekvivalentne:\n")
+cat("mu = exp(", round(coefs[1], 2), "+", round(coefs[2], 4), "* year +", 
+    round(coefs[3], 4), "* hours)\n")
+```
+
+---
+
+*Cvicenia 12.5-12.9 z ucebnice "Bayes Rules! An Introduction to Applied Bayesian Modeling" (Johnson, Ott, Dogucu)*

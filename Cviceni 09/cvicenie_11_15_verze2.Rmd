@@ -1,0 +1,414 @@
+---
+title: "Cvicenie 11.15 - Bayesianska Regresia pre Perth Weather"
+author: "Dana"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Zadanie
+
+**Exercise 11.15 (Open-ended)**: Pouzite data `weather_perth` z balicka `bayesrules` na vytvorenie "uspesneho" modelu poobednajsich teplot (`temp3pm`) v Perth, Australia. Mozete si vybrat, ktore prediktory pouzijete a ci zahrnute interakcne cleny. Nezabudnite vyhodnotit vas model a vysvetlit proces modelovania.
+
+# Teoreticky Uvod
+
+## Bayesianska Normalna Regresia
+
+Pre kvantitativnu odpoved $Y$ a prediktory $(X_1, X_2, \ldots, X_p)$:
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \ldots, \beta_p, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \cdots + \beta_p X_{ip}
+\end{aligned}
+$$
+
+## Model s Kategorickym Prediktorom
+
+Pre kategoricky prediktor $X_2$ (napr. `raintoday` s hodnotami 0/1):
+
+$$
+X_{i2} = \begin{cases} 
+1 & \text{ak prsi (Yes)} \\ 
+0 & \text{inak (No - referencna kategoria)} 
+\end{cases}
+$$
+
+Potom koeficient $\beta_2$ reprezentuje typicky rozdiel v $Y$ medzi danou kategoriou a referencnou kategoriou.
+
+## Model s Interakciou
+
+Ked prediktory $X_1$ a $X_2$ interaguju, vztah medzi $Y$ a $X_1$ sa meni v zavislosti od hodnoty $X_2$:
+
+$$
+\mu_i = \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \beta_3 X_{i1} X_{i2}
+$$
+
+Pre nas model s `temp9am` ($X_1$) a `raintoday` ($X_2$):
+
+- **Ked neprsi** ($X_2 = 0$): $\mu = \beta_0 + \beta_1 \cdot \text{temp9am}$
+- **Ked prsi** ($X_2 = 1$): $\mu = (\beta_0 + \beta_2) + (\beta_1 + \beta_3) \cdot \text{temp9am}$
+
+Koeficient interakcie $\beta_3$ teda vyjadruje, o kolko sa meni sklon (slope) vztahu medzi teplotami v zavislosti od toho, ci prsi.
+
+# Nacitanie Balickov a Dat
+
+```{r packages}
+# Nacitanie balickov
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(broom.mixed)
+library(tidybayes)
+library(janitor)
+
+# Nacitanie dat
+data(weather_perth)
+```
+
+# Prieskumna Vizualizacia
+
+```{r eda-viz}
+ggplot(weather_perth, aes(x = temp9am, y = temp3pm)) +
+  geom_point(size = 0.2, alpha = 0.5) +
+  labs(title = "Vztah medzi rannou a poobednajsiou teplotou v Perth",
+       x = "Teplota o 9:00 (°C)",
+       y = "Teplota o 15:00 (°C)") +
+  theme_minimal()
+```
+
+# Model 1: Jednoduchy Model
+
+## Specifikacia Modelu 1
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 \cdot \text{temp9am}_i
+\end{aligned}
+$$
+
+**Priory:**
+
+$$
+\begin{aligned}
+\beta_{0c} &\sim N(25, 5^2) \\
+\beta_1 &\sim N(0, 2.5^2) \quad \text{(autoscaled)} \\
+\sigma &\sim \text{Exp}(1) \quad \text{(autoscaled)}
+\end{aligned}
+$$
+
+## Simulacia Posterioru
+
+```{r model1}
+weather_model_1 <- stan_glm(
+  temp3pm ~ temp9am, 
+  data = weather_perth, family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE), 
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0)
+```
+
+## Prior Specifikacia
+
+```{r model1-prior}
+prior_summary(weather_model_1)
+```
+
+## MCMC Diagnostika
+
+```{r model1-trace, fig.width=10, fig.height=3}
+mcmc_trace(weather_model_1, size = 0.1)
+```
+
+```{r model1-dens, fig.width=10, fig.height=3}
+mcmc_dens_overlay(weather_model_1)
+```
+
+```{r model1-acf, fig.width=10, fig.height=3}
+mcmc_acf(weather_model_1)
+```
+
+```{r model1-conv}
+cat("Effective Sample Size Ratios:\n")
+neff_ratio(weather_model_1)
+
+cat("\nR-hat hodnoty:\n")
+rhat(weather_model_1)
+```
+
+## Posterior Credible Intervals
+
+```{r model1-ci}
+posterior_interval(weather_model_1, prob = 0.80)
+```
+
+## Posterior Predictive Check
+
+```{r model1-ppc}
+pp_check(weather_model_1) +
+  labs(title = "Model 1: Posterior Predictive Check")
+```
+
+# Model 2: S Kategorickym Prediktorom (raintoday)
+
+## Specifikacia Modelu 2
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \beta_2, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 \cdot \text{temp9am}_i + \beta_2 \cdot \text{raintoday}_i
+\end{aligned}
+$$
+
+kde $\text{raintoday}_i = 1$ ak v den $i$ prsi, inak 0.
+
+**Interpretacia:**
+
+- $\beta_0$: Typicka poobednasjia teplota ked je ranna teplota 0°C a neprsi
+- $\beta_1$: Zmena v poobednajsej teplote za kazdy 1°C narast rannej teploty (pri kontrole dazda)
+- $\beta_2$: Rozdiel v typickej poobednajsej teplote medzi dazdivymi a bezdasdovymi dnami (pri kontrole rannej teploty)
+
+## Simulacia Posterioru
+
+```{r model2}
+weather_model_2 <- stan_glm(
+  temp3pm ~ temp9am + raintoday, 
+  data = weather_perth, family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE), 
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0)
+```
+
+## Prior Specifikacia
+
+```{r model2-prior}
+prior_summary(weather_model_2)
+```
+
+## MCMC Diagnostika
+
+```{r model2-trace, fig.width=10, fig.height=4}
+mcmc_trace(weather_model_2, size = 0.1)
+```
+
+```{r model2-dens, fig.width=10, fig.height=4}
+mcmc_dens_overlay(weather_model_2)
+```
+
+```{r model2-acf, fig.width=10, fig.height=4}
+mcmc_acf(weather_model_2)
+```
+
+```{r model2-conv}
+cat("Effective Sample Size Ratios:\n")
+neff_ratio(weather_model_2)
+
+cat("\nR-hat hodnoty:\n")
+rhat(weather_model_2)
+```
+
+## Posterior Credible Intervals
+
+```{r model2-ci}
+posterior_interval(weather_model_2, prob = 0.80)
+```
+
+## Posterior Predictive Check
+
+```{r model2-ppc}
+pp_check(weather_model_2) +
+  labs(title = "Model 2: Posterior Predictive Check")
+```
+
+# Model 3: S Interakcnym Clenom
+
+## Specifikacia Modelu 3
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \beta_2, \beta_3, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \\
+\mu_i &= \beta_0 + \beta_1 \cdot \text{temp9am}_i + \beta_2 \cdot \text{raintoday}_i + \beta_3 \cdot \text{temp9am}_i \cdot \text{raintoday}_i
+\end{aligned}
+$$
+
+**Rozklad podla scenara:**
+
+- **Ked neprsi** ($\text{raintoday} = 0$):
+$$\mu = \beta_0 + \beta_1 \cdot \text{temp9am}$$
+
+- **Ked prsi** ($\text{raintoday} = 1$):
+$$\mu = (\beta_0 + \beta_2) + (\beta_1 + \beta_3) \cdot \text{temp9am}$$
+
+**Interpretacia $\beta_3$:** Rozdiel v sklonoch - o kolko sa meni vztah medzi rannou a poobednajsiou teplotou v dazdivych dnoch oproti bezdasdovym.
+
+## Simulacia Posterioru
+
+```{r model3}
+weather_model_3 <- stan_glm(
+  temp3pm ~ temp9am + raintoday + raintoday:temp9am, 
+  data = weather_perth, family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE), 
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735,
+  refresh = 0)
+```
+
+## Prior Specifikacia
+
+```{r model3-prior}
+prior_summary(weather_model_3)
+```
+
+## MCMC Diagnostika
+
+```{r model3-trace, fig.width=10, fig.height=4}
+mcmc_trace(weather_model_3, size = 0.1)
+```
+
+```{r model3-dens, fig.width=10, fig.height=4}
+mcmc_dens_overlay(weather_model_3)
+```
+
+```{r model3-acf, fig.width=10, fig.height=4}
+mcmc_acf(weather_model_3)
+```
+
+```{r model3-conv}
+cat("Effective Sample Size Ratios:\n")
+neff_ratio(weather_model_3)
+
+cat("\nR-hat hodnoty:\n")
+rhat(weather_model_3)
+```
+
+## Posterior Credible Intervals
+
+```{r model3-ci}
+posterior_interval(weather_model_3, prob = 0.80)
+```
+
+## Posterior Predictive Check
+
+```{r model3-ppc}
+pp_check(weather_model_3) +
+  labs(title = "Model 3: Posterior Predictive Check")
+```
+
+## Posterior Summary
+
+```{r model3-summary}
+tidy(weather_model_3, effects = c("fixed", "aux"),
+     conf.int = TRUE, conf.level = 0.80)
+```
+
+# Hodnotenie Prediktivnej Presnosti
+
+## Vizualizacia Predikcii (Model 1)
+
+```{r pred-viz}
+set.seed(84735)
+predictions_1 <- posterior_predict(weather_model_1, newdata = weather_perth)
+
+ppc_intervals(weather_perth$temp3pm, yrep = predictions_1, 
+              x = weather_perth$temp9am, prob = 0.5, prob_outer = 0.95) + 
+  labs(x = "temp9am", y = "temp3pm",
+       title = "Posterior Prediktivne Modely (Model 1)")
+```
+
+## Cross-Validation (10-fold)
+
+```{r cv}
+set.seed(84735)
+cv_results <- prediction_summary_cv(model = weather_model_1, data = weather_perth, k = 10)
+cv_results
+```
+
+# Porovnanie Modelov pomocou ELPD
+
+## Vypocet ELPD
+
+ELPD (Expected Log Predictive Density) meria ocakavanu logaritmicku prediktivnu hustotu. Vyssie hodnoty znamenaju lepsiu prediktivnu presnost.
+
+$$
+\text{ELPD} = \sum_{i=1}^{n} \log p(y_i | y_{-i})
+$$
+
+kde $p(y_i | y_{-i})$ je leave-one-out prediktivna hustota.
+
+```{r elpd}
+set.seed(84735)
+loo_1 <- loo(weather_model_1)
+loo_2 <- loo(weather_model_2)
+loo_3 <- loo(weather_model_3)
+```
+
+### ELPD hodnoty
+**Model 1 (temp9am):** `r loo_1$estimates[1]`
+**Model 2 (temp9am + raintoday):** `r loo_2$estimates[1]`
+**Model 3 (s interakciou):** `r loo_3$estimates[1]`
+
+## Porovnanie Modelov
+
+```{r elpd-compare}
+loo_compare(loo_1, loo_2, loo_3)
+```
+
+## Interpretacia Porovnania
+
+Funkcia `loo_compare()` zoradi modely od najlepsieho po najhorsi (podla ELPD):
+
+- **elpd_diff**: Rozdiel v ELPD oproti najlepsiemu modelu (0 = najlepsi)
+- **se_diff**: Standardna chyba rozdielu
+
+**Pravidlo:** Ak $|elpd_{diff}| < 2 \times se_{diff}$, rozdiel medzi modelmi nie je statisticky vyznamny.
+
+# Zaver
+
+## Suhrn Modelov
+
+| Model | Formula | Popis |
+|-------|---------|-------|
+| Model 1 | `temp3pm ~ temp9am` | Jednoduchy linearny model |
+| Model 2 | `temp3pm ~ temp9am + raintoday` | S kategorickym prediktorom |
+| Model 3 | `temp3pm ~ temp9am + raintoday + temp9am:raintoday` | S interakciou |
+
+## Vyber Modelu
+
+Na zaklade ELPD porovnania a principu **parsimonie** (jednoduchosti) mozeme vybrat najvhodnejsi model. Pri vybere zvazujeme:
+
+1. **Prediktivna presnost** (ELPD)
+2. **Zlozitost modelu** (pocet parametrov)
+3. **Interpretovatelnost**
+4. **Bias-variance trade-off**
+
+## Posteriorny Median Model (Model 3)
+
+Ak je Model 3 najlepsi, posteriorny median model ma tvar:
+
+**Pre bezdasdove dni:**
+$$\widehat{\text{temp3pm}} = \hat{\beta}_0 + \hat{\beta}_1 \cdot \text{temp9am}$$
+
+**Pre dazdive dni:**
+$$\widehat{\text{temp3pm}} = (\hat{\beta}_0 + \hat{\beta}_2) + (\hat{\beta}_1 + \hat{\beta}_3) \cdot \text{temp9am}$$
+
+```{r final-equation}
+coefs <- tidy(weather_model_3)$estimate
+cat("Bezdasdove dni: temp3pm =", round(coefs[1], 2), "+", round(coefs[2], 3), "* temp9am\n")
+cat("Dazdive dni: temp3pm =", round(coefs[1] + coefs[3], 2), "+", 
+    round(coefs[2] + coefs[4], 3), "* temp9am\n")
+```
+
