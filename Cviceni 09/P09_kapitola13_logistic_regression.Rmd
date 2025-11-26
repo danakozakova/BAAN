@@ -1,0 +1,793 @@
+---
+title: "Kapitola 13: Logistická regresia"
+subtitle: "Bayes Rules! An Introduction to Applied Bayesian Modeling"
+author: "Študijné materiály"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+# Úvod do logistickej regresie
+
+V kapitole 12 sme sa naučili, že nie každá regresia je Normálna. V kapitole 13 čelíme ďalšiemu faktu: **nie každá závislá premenná $Y$ je kvantitatívna**. 
+
+Môžeme chcieť modelovať:
+
+- $Y$ = či spevák vyhrá Grammy, podľa recenzií albumu
+- $Y$ = či osoba bude voliť, podľa veku a politického presvedčenia
+
+V týchto príkladoch, a v klasifikačných úlohách všeobecne, je $Y$ **kategorická premenná**.
+
+## Prípadová štúdia: Predpoveď dažďa v Perthe
+
+Nachádzame sa v Austrálii, konkrétne v meste Perth. Naším cieľom bude **predpovedať, či bude zajtra pršať**.
+
+Závislá premenná $Y$ je binárna kategorická premenná:
+
+$$Y = \begin{cases} 1 & \text{ak zajtra prší} \\ 0 & \text{inak} \end{cases}$$
+
+**Potenciálne prediktory:**
+
+- $X_1$ = dnešná vlhkosť o 9:00 ráno (%)
+- $X_2$ = dnešná vlhkosť o 15:00 (%)
+- $X_3$ = či dnes pršalo
+
+**Náš apriorný odhad:**
+
+- Priemerný deň má približne 20% šancu na dážď
+- Šanca na dážď sa zvyšuje s vysokou vlhkosťou alebo ak už pršalo
+
+## Načítanie balíkov a dát
+
+```{r packages}
+# Načítanie potrebných balíkov
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(tidybayes)
+library(broom.mixed)
+library(janitor)
+```
+
+```{r data}
+# Načítanie a príprava dát
+data(weather_perth)
+weather <- weather_perth %>%
+  select(day_of_year, raintomorrow, humidity9am, humidity3pm, raintoday)
+
+# Prehľad dát
+head(weather)
+dim(weather)
+
+# Rozdelenie závislej premennej
+table(weather$raintomorrow)
+prop.table(table(weather$raintomorrow))
+```
+
+---
+
+# Odds (šanca) a pravdepodobnosť {#odds}
+
+Pred samotnou logistickou regresiou si zopakujme koncept **odds (šanca)** a jeho vzťah k pravdepodobnosti.
+
+## Definícia odds
+
+Nech $\pi$ je pravdepodobnosť udalosti. Potom **odds** (šanca) tejto udalosti je definovaná ako:
+
+$$\text{odds} = \frac{\pi}{1-\pi}$$
+
+**Kľúčové rozdiely:**
+
+| Miera | Rozsah hodnôt |
+|-------|---------------|
+| Pravdepodobnosť $\pi$ | $[0, 1]$ |
+| Odds $\frac{\pi}{1-\pi}$ | $[0, \infty)$ |
+
+## Príklady interpretácie odds
+
+### Príklad 1: Pravdepodobnosť dažďa = 2/3
+
+$$\text{odds dažďa} = \frac{2/3}{1-2/3} = \frac{2/3}{1/3} = 2$$
+
+**Interpretácia:** Je **dvakrát** pravdepodobnejšie, že bude pršať, ako že nebude.
+
+### Príklad 2: Pravdepodobnosť dažďa = 1/3
+
+$$\text{odds dažďa} = \frac{1/3}{1-1/3} = \frac{1/3}{2/3} = \frac{1}{2}$$
+
+**Interpretácia:** Je **polovica** tak pravdepodobné, že bude pršať, ako že nebude.
+
+### Príklad 3: Pravdepodobnosť dažďa = 1/2
+
+$$\text{odds dažďa} = \frac{1/2}{1-1/2} = \frac{1/2}{1/2} = 1$$
+
+**Interpretácia:** Je **rovnako** pravdepodobné, že bude alebo nebude pršať.
+
+## Pravidlá pre interpretáciu odds
+
+> **Interpretácia odds:**
+> 
+> - **odds < 1** $\Leftrightarrow$ $\pi < 0.5$ (udalosť je nepravdepodobná)
+> - **odds = 1** $\Leftrightarrow$ $\pi = 0.5$ (50-50 šanca)
+> - **odds > 1** $\Leftrightarrow$ $\pi > 0.5$ (udalosť je pravdepodobná)
+
+## Konverzia odds na pravdepodobnosť
+
+Z odds môžeme získať pravdepodobnosť:
+
+$$\pi = \frac{\text{odds}}{1 + \text{odds}}$$
+
+**Príklad:** Ak odds dažďa = 4, potom:
+
+$$\pi = \frac{4}{1 + 4} = \frac{4}{5} = 0.8$$
+
+```{r odds-examples}
+# Praktické výpočty
+prob_to_odds <- function(p) p / (1 - p)
+odds_to_prob <- function(odds) odds / (1 + odds)
+
+# Príklady
+tibble(
+  pravdepodobnost = c(0.1, 0.2, 0.33, 0.5, 0.67, 0.8, 0.9),
+  odds = prob_to_odds(pravdepodobnost),
+  log_odds = log(odds)
+) %>%
+  mutate(across(where(is.numeric), ~round(., 3)))
+```
+
+---
+
+# Budovanie modelu logistickej regresie {#building}
+
+## Špecifikácia dátového modelu
+
+Nech $Y_i$ je indikátor 0/1, či zajtra prší pre deň $i$. Modelujeme $Y_i$ pomocou prediktora - dnešnej rannej vlhkosti $X_{i1}$.
+
+### Výber vhodného rozdelenia
+
+**Otázka:** Aká je vhodná štruktúra modelu pre dáta $Y_i$?
+
+Keďže $Y_i$ je diskrétna premenná, ktorá môže nadobúdať len hodnoty 0 alebo 1, najvhodnejší je **Bernoulliho model**:
+
+$$Y_i | \pi_i \sim \text{Bern}(\pi_i)$$
+
+so strednou hodnotou:
+
+$$E(Y_i|\pi_i) = \pi_i$$
+
+### Výber linkovej funkcie
+
+Potrebujeme nájsť vhodnú linkovú funkciu $g(\cdot)$, ktorá je lineárne závislá od $X_{i1}$:
+
+$$g(\pi_i) = \beta_0 + \beta_1 X_{i1}$$
+
+**Prečo nemôžeme použiť:**
+
+| Možnosť | Rozsah | Problém |
+|---------|--------|---------|
+| $\pi_i = \beta_0 + \beta_1 X_{i1}$ | $[0,1]$ | Línia môže ísť mimo $[0,1]$ |
+| $\text{odds}_i = \beta_0 + \beta_1 X_{i1}$ | $[0, \infty)$ | Línia môže byť záporná |
+| $\log(\pi_i) = \beta_0 + \beta_1 X_{i1}$ | $(-\infty, 0]$ | Línia môže byť kladná |
+| $\log\left(\frac{\pi_i}{1-\pi_i}\right) = \beta_0 + \beta_1 X_{i1}$ | $(-\infty, \infty)$ | ✓ Funguje! |
+
+## Logitová linková funkcia
+
+Najvhodnejšia je **logitová linková funkcia**:
+
+$$g(\pi_i) = \log\left(\frac{\pi_i}{1 - \pi_i}\right) = \text{logit}(\pi_i)$$
+
+**Model logistickej regresie:**
+
+$$Y_i|\beta_0,\beta_1 \stackrel{ind}{\sim} \text{Bern}(\pi_i) \text{ kde } \log\left(\frac{\pi_i}{1 - \pi_i}\right) = \beta_0 + \beta_1 X_{i1}$$
+
+## Transformácie na rôzne škály
+
+Z log-odds môžeme získať odds a pravdepodobnosť:
+
+**Odds škála:**
+$$\frac{\pi_i}{1-\pi_i} = e^{\beta_0 + \beta_1 X_{i1}}$$
+
+**Pravdepodobnostná škála:**
+$$\pi_i = \frac{e^{\beta_0 + \beta_1 X_{i1}}}{1 + e^{\beta_0 + \beta_1 X_{i1}}}$$
+
+```{r link-functions, fig.cap="Vzťah medzi vlhkosťou a dažďom na rôznych škálach"}
+# Vizualizácia rôznych škál
+beta_0 <- -4
+beta_1 <- 0.1
+x <- seq(0, 100, by = 1)
+
+df_scales <- tibble(
+  humidity = x,
+  log_odds = beta_0 + beta_1 * x,
+  odds = exp(log_odds),
+  probability = odds / (1 + odds)
+)
+
+# Grafy
+p1 <- ggplot(df_scales, aes(x = humidity, y = log_odds)) +
+  geom_line(color = "steelblue", linewidth = 1.2) +
+  labs(x = "Vlhkosť o 9:00 (%)", y = "log(odds dažďa)",
+       title = "Log-odds škála (lineárna)") +
+  theme_minimal()
+
+p2 <- ggplot(df_scales, aes(x = humidity, y = odds)) +
+  geom_line(color = "darkgreen", linewidth = 1.2) +
+  labs(x = "Vlhkosť o 9:00 (%)", y = "Odds dažďa",
+       title = "Odds škála (exponenciálna)") +
+  theme_minimal()
+
+p3 <- ggplot(df_scales, aes(x = humidity, y = probability)) +
+  geom_line(color = "darkorange", linewidth = 1.2) +
+  labs(x = "Vlhkosť o 9:00 (%)", y = "Pravdepodobnosť dažďa",
+       title = "Pravdepodobnostná škála (S-krivka)") +
+  theme_minimal()
+
+library(patchwork)
+p1 + p2 + p3
+```
+
+## Interpretácia koeficientov logistickej regresie
+
+> **Interpretácia $\beta_0$ (intercept):**
+> 
+> Keď všetky prediktory $(X_1, X_2, \ldots, X_p) = 0$:
+> 
+> - $\beta_0$ je log(odds) udalosti
+> - $e^{\beta_0}$ sú odds udalosti
+
+> **Interpretácia $\beta_1$ (sklon):**
+> 
+> Pri kontrole ostatných prediktorov, keď sa $X_1$ zvýši o 1:
+> 
+> - $\beta_1$ je zmena v log(odds)
+> - $e^{\beta_1}$ je **multiplikatívna zmena** v odds
+> 
+> $$\beta_1 = \log(\text{odds}_{x+1}) - \log(\text{odds}_x)$$
+> $$e^{\beta_1} = \frac{\text{odds}_{x+1}}{\text{odds}_x}$$
+
+**Príklad s $\beta_0 = -4$ a $\beta_1 = 0.1$:**
+
+Pri vlhkosti 0%:
+$$\text{odds dažďa} = e^{-4} = 0.0183$$
+$$\text{pravdepodobnosť dažďa} = \frac{e^{-4}}{1 + e^{-4}} = 0.018$$
+
+Pre každý 1% nárast vlhkosti:
+$$\text{multiplikatívna zmena odds} = e^{0.1} = 1.11$$
+
+**Interpretácia:** Odds dažďa sa zvyšujú o 11% s každým percentuálnym bodom vlhkosti.
+
+## Špecifikácia apriorných rozdelení
+
+Pre koeficienty logistickej regresie použijeme normálne apriorné rozdelenia:
+
+$$\begin{aligned}
+\text{dáta:} \quad & Y_i|\beta_0,\beta_1 \stackrel{ind}{\sim} \text{Bern}(\pi_i) \text{ kde } \log\left(\frac{\pi_i}{1 - \pi_i}\right) = \beta_0 + \beta_1 X_{i1} \\
+\text{apriórne:} \quad & \beta_{0c} \sim N(-1.4, 0.7^2) \\
+& \beta_1 \sim N(0.07, 0.035^2)
+\end{aligned}$$
+
+### Odôvodnenie apriorného rozdelenia pre $\beta_{0c}$
+
+Máme apriorný odhad, že priemerný deň má ~20% šancu na dážď:
+
+$$\log\left(\frac{0.2}{1-0.2}\right) = \log(0.25) \approx -1.4$$
+
+Apriorný 95% interval pre $\beta_{0c}$: $(-1.4 \pm 2 \times 0.7) = (-2.8, 0)$
+
+Na odds škále: $(e^{-2.8}, e^{0}) = (0.06, 1)$
+
+Na pravdepodobnostnej škále: $(0.057, 0.50)$
+
+### Simulácia z apriorného rozdelenia
+
+```{r prior-simulation}
+# Apriorná simulácia
+rain_model_prior <- stan_glm(
+  raintomorrow ~ humidity9am,
+  data = weather, 
+  family = binomial,
+  prior_intercept = normal(-1.4, 0.7),
+  prior = normal(0.07, 0.035),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  prior_PD = TRUE  # Len apriorná simulácia
+)
+```
+
+```{r prior-plots, fig.cap="Apriorné prediktívne simulácie"}
+set.seed(84735)
+
+# Graf 100 apriorných modelov
+p_prior_models <- weather %>%
+  add_fitted_draws(rain_model_prior, n = 100) %>%
+  ggplot(aes(x = humidity9am, y = raintomorrow)) +
+  geom_line(aes(y = .value, group = .draw), alpha = 0.3, color = "steelblue") +
+  labs(x = "Vlhkosť o 9:00 (%)", 
+       y = "Pravdepodobnosť dažďa",
+       title = "100 apriorných modelov") +
+  theme_minimal()
+
+# Apriorná distribúcia podielu dažďových dní
+p_prior_rain <- weather %>%
+  add_predicted_draws(rain_model_prior, n = 100) %>%
+  group_by(.draw) %>%
+  summarize(proportion_rain = mean(.prediction == 1)) %>%
+  ggplot(aes(x = proportion_rain)) +
+  geom_histogram(fill = "steelblue", color = "white", bins = 20) +
+  labs(x = "Podiel dažďových dní", 
+       y = "Počet",
+       title = "Apriorná distribúcia podielu dažďa") +
+  theme_minimal()
+
+p_prior_models + p_prior_rain
+```
+
+---
+
+# Simulácia posteriorného rozdelenia {#posterior}
+
+## Exploratívna analýza dát
+
+```{r eda, fig.cap="Exploratívna analýza vzťahu dažďa a vlhkosti"}
+# Jitter plot
+p_jitter <- ggplot(weather, aes(x = humidity9am, y = as.numeric(raintomorrow == "Yes"))) +
+  geom_jitter(height = 0.05, alpha = 0.3, size = 0.8) +
+  labs(x = "Vlhkosť o 9:00 (%)", y = "Dážď zajtra (0/1)",
+       title = "Rozloženie dát") +
+  theme_minimal()
+
+# Miera dažďa podľa pásiem vlhkosti
+p_rate <- weather %>%
+  mutate(humidity_bracket = cut(humidity9am, breaks = seq(10, 100, by = 10))) %>%
+  group_by(humidity_bracket) %>%
+  summarize(rain_rate = mean(raintomorrow == "Yes"), n = n()) %>%
+  ggplot(aes(x = humidity_bracket, y = rain_rate)) +
+  geom_point(size = 3, color = "darkorange") +
+  geom_line(aes(group = 1), color = "darkorange") +
+  labs(x = "Pásmo vlhkosti (%)", y = "Podiel dažďových dní",
+       title = "Miera dažďa podľa vlhkosti") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_jitter + p_rate
+```
+
+## Posteriorná simulácia
+
+```{r posterior-sim}
+# Posteriorná simulácia
+rain_model_1 <- update(rain_model_prior, prior_PD = FALSE)
+```
+
+## MCMC diagnostika
+
+```{r mcmc-diagnostics, fig.cap="MCMC diagnostika"}
+# Trace plots
+mcmc_trace(rain_model_1) + 
+  ggtitle("Trace plots - konvergencia reťazcov")
+```
+
+```{r mcmc-density, fig.cap="Posteriorné hustoty"}
+# Density plots
+mcmc_dens_overlay(rain_model_1) +
+  ggtitle("Posteriorné hustoty pre jednotlivé reťazce")
+```
+
+```{r mcmc-acf, fig.cap="Autokorelácia"}
+# Autocorrelation
+mcmc_acf(rain_model_1) +
+  ggtitle("Autokorelácia")
+```
+
+## Posteriorné modely
+
+```{r posterior-models, fig.cap="100 posteriorných modelov"}
+weather %>%
+  add_fitted_draws(rain_model_1, n = 100) %>%
+  ggplot(aes(x = humidity9am, y = as.numeric(raintomorrow == "Yes"))) +
+  geom_line(aes(y = .value, group = .draw), alpha = 0.15, color = "steelblue") +
+  labs(x = "Vlhkosť o 9:00 (%)", 
+       y = "Pravdepodobnosť dažďa",
+       title = "100 posteriorných modelov vzťahu vlhkosti a dažďa") +
+  theme_minimal()
+```
+
+## Posteriorné súhrny
+
+```{r posterior-summary}
+# Súhrn na log-odds škále
+cat("=== Posteriorné intervaly na log(odds) škále ===\n")
+posterior_interval(rain_model_1, prob = 0.80)
+
+# Súhrn na odds škále
+cat("\n=== Posteriorné intervaly na odds škále ===\n")
+exp(posterior_interval(rain_model_1, prob = 0.80))
+
+# Tidy súhrn
+tidy(rain_model_1, effects = "fixed", conf.int = TRUE, conf.level = 0.80)
+```
+
+**Interpretácia koeficientu $\beta_1$ (humidity9am):**
+
+S 80% posteriornou pravdepodobnosťou:
+
+- Na log(odds) škále: pre každý 1% nárast vlhkosti sa log(odds) dažďa zvyšuje o 0.041 až 0.055
+- Na odds škále: pre každý 1% nárast vlhkosti sa odds dažďa zvyšujú o **4.2% až 5.6%**
+- Pre každých 15% nárastu vlhkosti sa odds dažďa približne **zdvojnásobia**: $(e^{15 \times 0.041}, e^{15 \times 0.055}) = (1.86, 2.28)$
+
+---
+
+# Predikcia a klasifikácia {#prediction}
+
+## Posteriorná predikcia pre nové pozorovanie
+
+Predpokladajme, že dnes bola vlhkosť 99%. Chceme predpovedať, či bude zajtra pršať.
+
+$$Y | \beta_0, \beta_1 \sim \text{Bern}(\pi) \text{ kde } \log\left( \frac{\pi}{1-\pi}\right) = \beta_0 + \beta_1 \times 99$$
+
+```{r prediction}
+# Posteriorná predikcia binárneho výsledku
+set.seed(84735)
+binary_prediction <- posterior_predict(
+  rain_model_1, 
+  newdata = data.frame(humidity9am = 99)
+)
+
+# Súhrn predikcií
+cat("=== Posteriorná predikcia pre vlhkosť 99% ===\n")
+table(binary_prediction)
+cat("\nPodiel predikcií s dažďom:", mean(binary_prediction), "\n")
+```
+
+## Manuálna simulácia predikcie
+
+```{r manual-prediction}
+# Posteriorná predikcia - manuálne
+set.seed(84735)
+rain_model_1_df <- as.data.frame(rain_model_1) %>%
+  mutate(
+    log_odds = `(Intercept)` + humidity9am * 99,
+    odds = exp(log_odds),
+    prob = odds / (1 + odds),
+    Y = rbinom(n(), size = 1, prob = prob)
+  )
+
+# Ukážka prvých riadkov
+head(rain_model_1_df, 5)
+```
+
+```{r prediction-plot, fig.cap="Posteriorné prediktívne rozdelenie"}
+# Vizualizácia
+p1 <- ggplot(data.frame(Y = as.factor(binary_prediction[,1])), aes(x = Y)) +
+  geom_bar(fill = c("steelblue", "darkorange")) +
+  labs(x = "Dážď (0 = nie, 1 = áno)", y = "Počet", 
+       title = "Posteriorná predikcia (posterior_predict)") +
+  theme_minimal()
+
+p2 <- ggplot(rain_model_1_df, aes(x = as.factor(Y))) +
+  geom_bar(fill = c("steelblue", "darkorange")) +
+  labs(x = "Dážď (0 = nie, 1 = áno)", y = "Počet",
+       title = "Posteriorná predikcia (manuálne)") +
+  theme_minimal()
+
+p1 + p2
+```
+
+## Klasifikačné pravidlo
+
+> **Klasifikačné pravidlo:**
+>
+> Nech $Y$ je binárna premenná (1 alebo 0), nech $(Y_{new}^{(1)}, Y_{new}^{(2)}, \ldots, Y_{new}^{(N)})$ sú $N$ posteriorných predikcií a $p$ je podiel predikcií kde $Y_{new}^{(i)} = 1$.
+>
+> Pre zvolený klasifikačný prah $c \in [0,1]$:
+>
+> - Ak $p \geq c$, klasifikuj $Y$ ako 1
+> - Ak $p < c$, klasifikuj $Y$ ako 0
+
+**Voľba prahu $c$:**
+
+- $c = 0.5$ (štandardný) - klasifikuj podľa väčšiny
+- $c < 0.5$ - zvýši citlivosť (sensitivity), zníži špecificitu
+- $c > 0.5$ - zvýši špecificitu (specificity), zníži citlivosť
+
+---
+
+# Evaluácia modelu {#evaluation}
+
+## Posteriorná prediktívna kontrola
+
+```{r pp-check, fig.cap="Posteriorná prediktívna kontrola"}
+# Funkcia na výpočet podielu dažďa
+proportion_rain <- function(x) mean(x == 1)
+
+# PP check
+pp_check(rain_model_1, nreps = 100,
+         plotfun = "stat", stat = "proportion_rain") +
+  xlab("Pravdepodobnosť dažďa") +
+  ggtitle("Posteriorná prediktívna kontrola")
+```
+
+## Klasifikačná presnosť
+
+### Definície metrík
+
+> **Confusion matrix a metriky presnosti:**
+>
+> | | $\hat{Y} = 0$ | $\hat{Y} = 1$ |
+> |---|---|---|
+> | $Y = 0$ | a (True Negative) | b (False Positive) |
+> | $Y = 1$ | c (False Negative) | d (True Positive) |
+>
+> **Celková presnosť (Overall accuracy):**
+> $$\text{accuracy} = \frac{a + d}{a + b + c + d}$$
+>
+> **Citlivosť (Sensitivity / True Positive Rate):**
+> $$\text{sensitivity} = \frac{d}{c + d}$$
+>
+> **Špecificita (Specificity / True Negative Rate):**
+> $$\text{specificity} = \frac{a}{a + b}$$
+
+### In-sample klasifikácia
+
+```{r classification-manual}
+# Posteriorné predikcie pre všetky dni v datasete
+set.seed(84735)
+rain_pred_1 <- posterior_predict(rain_model_1, newdata = weather)
+
+# Klasifikácia s prahom 0.5
+weather_classifications <- weather %>%
+  mutate(
+    rain_prob = colMeans(rain_pred_1),
+    rain_class_05 = as.numeric(rain_prob >= 0.5),
+    rain_class_02 = as.numeric(rain_prob >= 0.2)
+  ) %>%
+  select(humidity9am, rain_prob, rain_class_05, rain_class_02, raintomorrow)
+
+# Ukážka
+head(weather_classifications, 10)
+```
+
+```{r confusion-matrix-05}
+# Confusion matrix pre prah 0.5
+cat("=== Confusion matrix (prah = 0.5) ===\n")
+weather_classifications %>%
+  tabyl(raintomorrow, rain_class_05) %>%
+  adorn_totals(c("row", "col"))
+```
+
+```{r classification-summary-05}
+# Klasifikačný súhrn s prahom 0.5
+set.seed(84735)
+cat("\n=== Klasifikačná presnosť (prah = 0.5) ===\n")
+classification_summary(model = rain_model_1, data = weather, cutoff = 0.5)
+```
+
+**Interpretácia (prah = 0.5):**
+
+- **Celková presnosť:** 81.7% - zdanlivo dobrá
+- **Špecificita:** 98.65% - výborne predpovedáme, keď NEBUDE pršať
+- **Citlivosť:** 7.53% - VEĽMI ZLÉ pri predpovedi dažďa!
+
+### Úprava klasifikačného prahu
+
+```{r classification-summary-02}
+# Klasifikačný súhrn s prahom 0.2
+set.seed(84735)
+cat("=== Klasifikačná presnosť (prah = 0.2) ===\n")
+classification_summary(model = rain_model_1, data = weather, cutoff = 0.2)
+```
+
+**Interpretácia (prah = 0.2):**
+
+- **Citlivosť:** vzrástla z 7.53% na 63.98% 
+- **Špecificita:** klesla z 98.65% na 71.25%
+- **Trade-off:** Lepšie predpovedáme dážď, ale častejšie zbytočne nosíme dáždnik
+
+### Krížová validácia
+
+```{r cv-accuracy}
+# 10-násobná krížová validácia
+set.seed(84735)
+cv_accuracy_1 <- classification_summary_cv(
+  model = rain_model_1, 
+  data = weather, 
+  cutoff = 0.2, 
+  k = 10
+)
+
+cat("=== Krížovo-validovaná presnosť (prah = 0.2) ===\n")
+cv_accuracy_1$cv
+```
+
+> **Trade-off medzi citlivosťou a špecificitou:**
+>
+> - Keď **znížime** prah $c$: citlivosť **rastie**, špecificita **klesá**
+> - Keď **zvýšime** prah $c$: špecificita **rastie**, citlivosť **klesá**
+
+---
+
+# Rozšírenie modelu {#extending}
+
+## Model s viacerými prediktormi
+
+Rozšírime model o ďalšie prediktory:
+
+- $X_1$ = vlhkosť o 9:00 (humidity9am)
+- $X_2$ = vlhkosť o 15:00 (humidity3pm)
+- $X_3$ = či dnes pršalo (raintoday)
+
+$$\log\left(\frac{\pi_i}{1-\pi_i}\right) = \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \beta_3 X_{i3}$$
+
+### Špecifikácia modelu
+
+$$\begin{aligned}
+Y_i | \beta_0, \beta_1, \beta_2, \beta_3 & \sim \text{Bern}(\pi_i) \\
+\log\left(\frac{\pi_i}{1-\pi_i}\right) &= \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \beta_3 X_{i3} \\
+\beta_{0c} & \sim N(-1.4, 0.7^2) \\
+\beta_1 & \sim N(0, 0.14^2) \\
+\beta_2 & \sim N(0, 0.15^2) \\
+\beta_3 & \sim N(0, 6.45^2)
+\end{aligned}$$
+
+```{r extended-model}
+# Model s viacerými prediktormi
+rain_model_2 <- stan_glm(
+  raintomorrow ~ humidity9am + humidity3pm + raintoday,
+  data = weather, 
+  family = binomial,
+  prior_intercept = normal(-1.4, 0.7),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735
+)
+
+# Apriorné rozdelenia
+prior_summary(rain_model_2)
+```
+
+### Posteriorné súhrny rozšíreného modelu
+
+```{r extended-summary}
+# Posteriorné súhrny
+tidy(rain_model_2, effects = "fixed", conf.int = TRUE, conf.level = 0.80)
+```
+
+**Interpretácia koeficientov:**
+
+1. **humidity3pm** ($\beta_2$): 80% CI je nad 0 → významný prediktor
+   - $e^{0.0796} = 1.083$ → pre každý 1% nárast popoludňajšej vlhkosti sa odds dažďa zvyšujú o ~8%
+
+2. **raintodayYes** ($\beta_3$): 80% CI je nad 0 → významný prediktor  
+   - $e^{1.15} = 3.17$ → ak dnes prší, odds dažďa zajtra sa **viac ako strojnásobia**
+
+3. **humidity9am** ($\beta_1$): 80% CI obsahuje 0 → NEVÝZNAMNÝ keď kontrolujeme ostatné prediktory
+   - To neznamená, že ranná vlhkosť nesúvisí s dažďom
+   - Znamená to, že informácia z `humidity9am` je **redundantná** keď už poznáme `humidity3pm` a `raintoday`
+
+### Porovnanie modelov
+
+```{r model-comparison-cv}
+# Krížová validácia pre oba modely
+set.seed(84735)
+cv_accuracy_2 <- classification_summary_cv(
+  model = rain_model_2, 
+  data = weather, 
+  cutoff = 0.2, 
+  k = 10
+)
+
+cat("=== Porovnanie krížovo-validovanej presnosti ===\n")
+cat("\nModel 1 (len humidity9am):\n")
+cv_accuracy_1$cv
+cat("\nModel 2 (humidity9am + humidity3pm + raintoday):\n")
+cv_accuracy_2$cv
+```
+
+```{r elpd-comparison}
+# Porovnanie ELPD
+loo_1 <- loo(rain_model_1)
+loo_2 <- loo(rain_model_2)
+
+cat("=== Porovnanie ELPD ===\n")
+loo_compare(loo_1, loo_2)
+```
+
+**Záver:** Model 2 je lepší - vyššia citlivosť, špecificita aj celková presnosť.
+
+---
+
+# Súhrn kapitoly {#summary}
+
+## Model Bayesovskej logistickej regresie
+
+Pre binárnu závislú premennú $Y \in \{0, 1\}$ a prediktory $(X_1, X_2, \ldots, X_p)$:
+
+$$\begin{aligned}
+\text{dáta:} \quad & Y_i|\beta_0,\beta_1,\ldots,\beta_p \stackrel{ind}{\sim} \text{Bern}(\pi_i) \\
+& \text{kde } \log\left(\frac{\pi_i}{1 - \pi_i}\right) = \beta_0 + \beta_1 X_{i1} + \cdots + \beta_p X_{ip} \\
+\text{apriórne:} \quad & \beta_{0c} \sim N(m_0, s_0^2) \\
+& \beta_{1} \sim N(m_1, s_1^2) \\
+& \vdots \\
+& \beta_{p} \sim N(m_p, s_p^2)
+\end{aligned}$$
+
+## Transformácie
+
+**Z log(odds) na odds:**
+$$\frac{\pi_i}{1-\pi_i} = e^{\beta_0 + \beta_1 X_{i1} + \cdots + \beta_p X_{ip}}$$
+
+**Z log(odds) na pravdepodobnosť:**
+$$\pi_i = \frac{e^{\beta_0 + \beta_1 X_{i1} + \cdots + \beta_p X_{ip}}}{1 + e^{\beta_0 + \beta_1 X_{i1} + \cdots + \beta_p X_{ip}}}$$
+
+## Kľúčové koncepty
+
+| Koncept | Popis |
+|---------|-------|
+| **Odds** | $\frac{\pi}{1-\pi}$ - pomer pravdepodobností |
+| **Logit link** | $\log\left(\frac{\pi}{1-\pi}\right)$ - transformácia na reálnu os |
+| **Sensitivity** | Schopnosť správne identifikovať $Y=1$ |
+| **Specificity** | Schopnosť správne identifikovať $Y=0$ |
+| **Classification cutoff** | Prah pre binárnu klasifikáciu |
+
+## Workflow Bayesovskej logistickej regresie
+
+1. **Špecifikuj model** - Bernoulliho rozdelenie + logit link
+2. **Nastav apriorné rozdelenia** - simuluj a skontroluj
+3. **Simuluj posteriorné rozdelenie** - pomocou `stan_glm(family = binomial)`
+4. **Skontroluj MCMC diagnostiku** - trace plots, density, autocorrelation
+5. **Interpretuj koeficienty** - na log(odds), odds a pravdepodobnostnej škále
+6. **Predikuj a klasifikuj** - zvol vhodný prah
+7. **Evaluuj model** - sensitivity, specificity, CV, ELPD
+
+---
+
+# Užitočné funkcie
+
+```{r useful-functions, eval=FALSE}
+# Logistická regresia v rstanarm
+stan_glm(y ~ x1 + x2, data = data, family = binomial,
+         prior_intercept = normal(m0, s0),
+         prior = normal(m, s, autoscale = TRUE))
+
+# Posteriorné intervaly
+posterior_interval(model, prob = 0.80)
+
+# Transformácia na odds
+exp(posterior_interval(model, prob = 0.80))
+
+# Posteriorná predikcia
+posterior_predict(model, newdata = new_data)
+
+# Klasifikačná presnosť
+classification_summary(model, data, cutoff = 0.5)
+
+# Krížová validácia
+classification_summary_cv(model, data, cutoff = 0.5, k = 10)
+
+# Porovnanie modelov
+loo_compare(loo(model_1), loo(model_2))
+```
+
+---
+
+*Materiál vytvorený podľa: Johnson, A. A., Ott, M. Q., & Dogucu, M. (2022). Bayes Rules! An Introduction to Applied Bayesian Modeling. CRC Press.*
