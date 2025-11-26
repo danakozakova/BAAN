@@ -121,6 +121,7 @@ Naive Bayes klasifikacia je priamou aplikaciou Bayesovho pravidla. Na vypocet po
 $$f(y \; | \; x_1) = \frac{\text{prior} \cdot \text{likelihood}}{\text{normalizacna konstanta}} = \frac{f(y)L(y \; | \; x_1)}{f(x_1)}$$
 
 kde podla **Zakona celkovej pravdepodobnosti**:
+TU si to dopis podla prednasky, rozpis tu sumu
 
 $$f(x_1) = \sum_{\text{vsetky } y'} f(y')L(y' \; | \; x_1)$$
 
@@ -137,11 +138,8 @@ penguins %>%
 
 ### Priorne pravdepodobnosti
 
-Z tabulky mozeme odvodit:
 
-$$f(y = A) = \frac{151}{342}, \quad f(y = C) = \frac{68}{342}, \quad f(y = G) = \frac{123}{342}$$
-
-```{r priors}
+```{r priors, echo = FALSE}
 # Vypocet priorov
 prior_A <- 151/342
 prior_C <- 68/342
@@ -152,6 +150,11 @@ cat("P(Adelie) =", round(prior_A, 4), "\n")
 cat("P(Chinstrap) =", round(prior_C, 4), "\n")
 cat("P(Gentoo) =", round(prior_G, 4), "\n")
 ```
+Z tabulky mozeme odvodit:
+$f(y = A) = \frac{151}{342}$ = `r round(prior_A, 4)`
+
+$$f(y = C) = \frac{68}{342}, \quad f(y = G) = \frac{123}{342}$$
+
 
 ### Likelihood
 

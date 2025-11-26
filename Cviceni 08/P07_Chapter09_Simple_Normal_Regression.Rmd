@@ -1,0 +1,546 @@
+---
+title: "Kapitola 9: Simple Normal Regression"
+subtitle: "Bayes Rules! - Bayesiánska lineárna regresia"
+author: "Študijný materiál"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+# Úvod do kapitoly
+
+Táto kapitola predstavuje základný **Bayesiánsky model normálnej regresie** - nástroj na modelovanie vzťahu medzi kvantitatívnou response premennou $Y$ a prediktorom $X$.
+
+## Načítanie potrebných balíkov
+
+```{r packages}
+library(bayesrules)
+library(tidyverse)
+library(rstan)
+library(rstanarm)
+library(bayesplot)
+library(tidybayes)
+library(janitor)
+library(broom.mixed)
+```
+
+## Motivácia: Capital Bikeshare
+
+**Príklad:** Capital Bikeshare je služba zdieľania bicyklov vo Washingtone D.C. Chceme modelovať počet jázd ($Y$) v závislosti od teploty ($X$).
+
+Základný normálny model pre dennú jazdivosť:
+$$Y_i | \mu, \sigma \stackrel{ind}{\sim} N(\mu, \sigma^2)$$
+
+Tento model má dva problémy:
+
+1. Predpokladáme, že poznáme $\sigma$ (variabilitu), ale nie $\mu$ (priemer)
+2. Ignorujeme potenciálne prediktory (počasie, deň v týždni, atď.)
+
+---
+
+# Budovanie regresného modelu
+
+## Špecifikácia dátového modelu
+
+Pre analýzu vzťahu medzi jazdivosťou ($Y$) a teplotou ($X$) potrebujeme vzorku $n$ dátových párov:
+$$\{(Y_1, X_1), (Y_2, X_2), ..., (Y_n, X_n)\}$$
+
+Namiesto globálneho priemeru $\mu$ použijeme **lokálny priemer** $\mu_i$ špecifický pre teplotu daného dňa:
+$$\mu_i = \beta_0 + \beta_1 X_i$$
+
+### Interpretácia koeficientov
+
+| Parameter | Interpretácia |
+|-----------|---------------|
+| $\beta_0$ (intercept) | Teoretická jazdivosť pri teplote 0°F (baseline modelu) |
+| $\beta_1$ (slope) | Zmena v jazdivosti na každý 1°F nárast teploty |
+
+### Dátový model
+
+$$Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2) \text{ kde } \mu_i = \beta_0 + \beta_1 X_i$$
+
+Parameter $\sigma$ teraz meria variabilitu od **lokálneho priemeru** pri danej teplote, nie od globálneho priemeru.
+
+## Predpoklady normálnej regresie
+
+1. **Štruktúra dát**: Pozorovania $Y_i$ sú nezávislé (po zohľadnení prediktora $X$)
+2. **Štruktúra vzťahu**: Typická hodnota $Y$ je lineárnou funkciou $X$: $\mu = \beta_0 + \beta_1 X$
+3. **Štruktúra variability**: Pri ľubovoľnej hodnote $X$ sa pozorované hodnoty $Y$ normálne rozptyľujú okolo priemeru $\mu$ s konštantnou smerodajnou odchýlkou $\sigma$
+
+## Špecifikácia priorov
+
+Pre regresné koeficienty $\beta_0$ a $\beta_1$ (môžu nadobúdať ľubovoľné reálne hodnoty):
+$$\beta_0 \sim N(m_0, s_0^2)$$
+$$\beta_1 \sim N(m_1, s_1^2)$$
+
+Pre smerodajnú odchýlku $\sigma$ (musí byť kladná):
+$$\sigma \sim \text{Exp}(l)$$
+
+kde $E(\sigma) = \frac{1}{l}$ a $SD(\sigma) = \frac{1}{l}$.
+
+## Kompletný Bayesiánsky model
+
+$$\boxed{
+\begin{aligned}
+\text{dáta:} \quad & Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2) \text{ kde } \mu_i = \beta_0 + \beta_1 X_i \\
+\text{priory:} \quad & \beta_0 \sim N(m_0, s_0^2) \\
+& \beta_1 \sim N(m_1, s_1^2) \\
+& \sigma \sim \text{Exp}(l)
+\end{aligned}
+}$$
+
+---
+
+# Ladenie priorov pre regresné parametre
+
+## Príklad: Bike sharing analýza
+
+Predpokladajme nasledovné priorové znalosti:
+
+1. Pri priemernej teplote (65-70°F) je typicky ~5000 jazdcov (rozsah 3000-7000)
+2. Na každý 1°F nárast teploty sa jazdivosť zvyšuje o ~100 jázd (rozsah 20-180)
+3. Pri danej teplote sa denná jazdivosť líši s $\sigma \approx 1250$ jázd
+
+### Centrovaný intercept $\beta_{0c}$
+
+**Dôležité:** $\beta_{0c}$ predstavuje typickú jazdivosť pri **priemernej** teplote (nie pri 0°F).
+
+```{r prior-plots, fig.height=3}
+# Prior pre centrovaný intercept
+p1 <- bayesrules::plot_normal(mean = 5000, sd = 1000) +
+  labs(x = expression(beta["0c"]), y = "pdf", title = "Prior pre intercept")
+
+# Prior pre slope
+p2 <- bayesrules::plot_normal(mean = 100, sd = 40) +
+  labs(x = expression(beta[1]), y = "pdf", title = "Prior pre slope")
+
+# Prior pre sigma
+p3 <- bayesrules::plot_gamma(shape = 1, rate = 0.0008) +
+  labs(x = expression(sigma), y = "pdf", title = "Prior pre sigma")
+
+library(patchwork)
+p1 + p2 + p3
+```
+
+### Špecifikovaný model
+
+$$\begin{aligned}
+Y_i | \beta_0, \beta_1, \sigma & \stackrel{ind}{\sim} N(\mu_i, \sigma^2) \text{ kde } \mu_i = \beta_0 + \beta_1 X_i \\
+\beta_{0c} & \sim N(5000, 1000^2) \\
+\beta_1 & \sim N(100, 40^2) \\
+\sigma & \sim \text{Exp}(0.0008)
+\end{aligned}$$
+
+---
+
+# Posteriorová simulácia
+
+## Načítanie dát
+
+```{r load-data}
+data(bikes)
+
+# Prehľad dát
+glimpse(bikes)
+```
+
+## Vizualizácia vzťahu
+
+```{r scatter-plot}
+ggplot(bikes, aes(x = temp_feel, y = rides)) +
+  geom_point(size = 0.8, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "steelblue", linewidth = 1) +
+  labs(
+    x = "Pocitová teplota (°F)",
+    y = "Počet jázd",
+    title = "Vzťah medzi teplotou a jazdivosťou"
+  ) +
+  theme_minimal()
+```
+
+## Prečo potrebujeme MCMC?
+
+Posteriorová distribúcia má tvar:
+$$f(\beta_0, \beta_1, \sigma | \vec{y}) \propto f(\beta_0) f(\beta_1) f(\sigma) \cdot \prod_{i=1}^{n} f(y_i | \beta_0, \beta_1, \sigma)$$
+
+Normalizačná konštanta vyžaduje trojitý integrál - prakticky nevyčísliteľný analyticky!
+
+## Simulácia pomocou rstanarm
+
+```{r bike-model, cache=TRUE, results='hide'}
+bike_model <- stan_glm(
+  rides ~ temp_feel, 
+  data = bikes,
+  family = gaussian,
+  prior_intercept = normal(5000, 1000),
+  prior = normal(100, 40),
+  prior_aux = exponential(0.0008),
+  chains = 4, 
+  iter = 5000 * 2, 
+  seed = 84735
+)
+```
+
+### Vysvetlenie syntaxe `stan_glm()`
+
+| Argument | Význam |
+|----------|--------|
+| `rides ~ temp_feel` | Model jazdivosti podľa teploty |
+| `data = bikes` | Použitý dataset |
+| `family = gaussian` | Normálny dátový model |
+| `prior_intercept` | Prior pre $\beta_{0c}$ |
+| `prior` | Prior pre $\beta_1$ |
+| `prior_aux` | Prior pre $\sigma$ |
+| `chains = 4` | Počet paralelných Markovových reťazcov |
+| `iter = 10000` | Počet iterácií na reťazec |
+
+## Diagnostika MCMC
+
+```{r diagnostics}
+# Effective sample size ratio a Rhat
+neff_ratio(bike_model)
+rhat(bike_model)
+```
+
+**Interpretácia:**
+
+- `neff_ratio` blízko 1 = reťazce sa správajú ako nezávislá vzorka
+- `rhat` blízko 1 = reťazce konvergovali k rovnakej distribúcii
+
+```{r trace-plots, fig.height=4}
+# Trace plots
+mcmc_trace(bike_model, size = 0.1) +
+  labs(title = "Trace plots - diagnostika konvergencie")
+```
+
+```{r density-plots, fig.height=4}
+# Density plots
+mcmc_dens_overlay(bike_model) +
+  labs(title = "Posteriorové hustoty z jednotlivých reťazcov")
+```
+
+---
+
+# Interpretácia posterioru
+
+## Súhrnné štatistiky
+
+```{r posterior-summary}
+tidy(bike_model, 
+     effects = c("fixed", "aux"),
+     conf.int = TRUE, 
+     conf.level = 0.80)
+```
+
+## Posteriorový mediánový model
+
+$$\hat{\mu} = -2194 + 82.2 \cdot X$$
+
+**Interpretácia:** Na každý 1°F nárast teploty očakávame nárast jazdivosti o približne **82 jázd**.
+
+## Vizualizácia posteriorových modelov
+
+```{r posterior-lines, fig.height=5}
+# 50 posteriorových modelových čiar
+bikes %>%
+  add_fitted_draws(bike_model, n = 50) %>%
+  ggplot(aes(x = temp_feel, y = rides)) +
+  geom_line(aes(y = .value, group = .draw), alpha = 0.15, color = "steelblue") +
+  geom_point(data = bikes, size = 0.3, alpha = 0.5) +
+  labs(
+    x = "Pocitová teplota (°F)",
+    y = "Počet jázd",
+    title = "50 posteriorových modelových čiar"
+  ) +
+  theme_minimal()
+```
+
+## Dôkaz pozitívnej asociácie
+
+```{r evidence-positive}
+# Získanie posteriorových vzoriek
+bike_model_df <- as.data.frame(bike_model)
+
+# Pravdepodobnosť, že beta_1 > 0
+prob_positive <- mean(bike_model_df$temp_feel > 0)
+cat("P(beta_1 > 0 | data) =", prob_positive)
+```
+
+80% kredibilný interval pre $\beta_1$ je $(75.6, 88.8)$ - leží celý nad nulou.
+
+---
+
+# Posteriorová predikcia
+
+## Dva zdroje variability
+
+Pri predikcii musíme zohľadniť:
+
+1. **Sampling variabilitu**: Pozorovaná jazdivosť $Y$ sa odchyľuje od modelovej čiary
+2. **Posteriorovú neistotu**: Neistota v parametroch $(\beta_0, \beta_1, \sigma)$
+
+## Posteriorová prediktívna distribúcia
+
+Pre nový bod $Y_{\text{new}}$ pri teplote $X_{\text{new}}$:
+
+$$f(y_{\text{new}} | \vec{y}) = \iiint f(y_{\text{new}} | \beta_0, \beta_1, \sigma) \cdot f(\beta_0, \beta_1, \sigma | \vec{y}) \, d\beta_0 \, d\beta_1 \, d\sigma$$
+
+## Predikcia "ručne" (pre pochopenie konceptu)
+
+Predpovedajme jazdivosť pre 75°F deň:
+
+```{r manual-prediction}
+set.seed(84735)
+
+predict_75 <- bike_model_df %>%
+  mutate(
+    # Priemerná jazdivosť pri 75°F
+    mu = `(Intercept)` + temp_feel * 75,
+    # Predikcia pre konkrétny deň (vrátane variability)
+    y_new = rnorm(n(), mean = mu, sd = sigma)
+  )
+
+head(predict_75, 5)
+```
+
+## Porovnanie: Priemer vs. Individuálna predikcia
+
+```{r compare-predictions, fig.height=4}
+# Posteriorová distribúcia priemernej jazdivosti pri 75°F
+p_mu <- ggplot(predict_75, aes(x = mu)) +
+  geom_density(fill = "steelblue", alpha = 0.5) +
+  labs(
+    x = expression(mu~"= priemerná jazdivosť pri 75°F"),
+    y = "Hustota",
+    title = "Posterior pre priemernú jazdivosť"
+  ) +
+  theme_minimal()
+
+# Posteriorová prediktívna distribúcia pre konkrétny deň
+p_new <- ggplot(predict_75, aes(x = y_new)) +
+  geom_density(fill = "coral", alpha = 0.5) +
+  labs(
+    x = expression(Y[new]~"= predikcia pre zajtra"),
+    y = "Hustota",
+    title = "Posteriorová predikcia pre zajtra"
+  ) +
+  theme_minimal()
+
+p_mu + p_new
+```
+
+```{r prediction-intervals}
+# 95% kredibilné intervaly
+predict_75 %>%
+  summarize(
+    `Dolná hranica (mu)` = quantile(mu, 0.025),
+    `Horná hranica (mu)` = quantile(mu, 0.975),
+    `Dolná hranica (Y_new)` = quantile(y_new, 0.025),
+    `Horná hranica (Y_new)` = quantile(y_new, 0.975)
+  ) %>%
+  round(0)
+```
+
+**Kľúčový insight:** Predikcia pre **konkrétny deň** má oveľa širší interval ako odhad **priemernej** jazdivosti!
+
+## Predikcia pomocou `posterior_predict()`
+
+```{r shortcut-prediction}
+set.seed(84735)
+
+# Posteriorová predikcia pre 75°F deň
+shortcut_prediction <- posterior_predict(
+  bike_model, 
+  newdata = data.frame(temp_feel = 75)
+)
+
+# 95% predikčný interval
+posterior_interval(shortcut_prediction, prob = 0.95)
+```
+
+```{r plot-prediction}
+mcmc_dens(shortcut_prediction) +
+  labs(
+    x = "Predikovaná jazdivosť pri 75°F",
+    title = "Posteriorová prediktívna distribúcia"
+  )
+```
+
+---
+
+# Sekvenčné modelovanie
+
+Bayesiánsky prístup umožňuje **sekvenčnú aktualizáciu** - môžeme pridávať dáta postupne.
+
+```{r sequential-demo, cache=TRUE, results='hide'}
+# Fáza 1: Prvých 30 dní
+phase_1 <- bikes %>% slice(1:30)
+
+model_phase1 <- stan_glm(
+  rides ~ temp_feel, data = phase_1,
+  family = gaussian,
+  prior_intercept = normal(5000, 1000),
+  prior = normal(100, 40),
+  prior_aux = exponential(0.0008),
+  chains = 4, iter = 5000*2, seed = 84735, refresh = 0
+)
+
+# Fáza 2: Prvých 60 dní
+phase_2 <- bikes %>% slice(1:60)
+
+model_phase2 <- stan_glm(
+  rides ~ temp_feel, data = phase_2,
+  family = gaussian,
+  prior_intercept = normal(5000, 1000),
+  prior = normal(100, 40),
+  prior_aux = exponential(0.0008),
+  chains = 4, iter = 5000*2, seed = 84735, refresh = 0
+)
+
+# Fáza 3: Všetkých 500 dní (= bike_model)
+```
+
+```{r sequential-plot, fig.height=4}
+# Porovnanie posteriorov pre beta_1 naprieč fázami
+df_comparison <- bind_rows(
+  as.data.frame(model_phase1) %>% mutate(Phase = "Fáza 1 (30 dní)"),
+  as.data.frame(model_phase2) %>% mutate(Phase = "Fáza 2 (60 dní)"),
+  as.data.frame(bike_model) %>% mutate(Phase = "Fáza 3 (500 dní)")
+)
+
+ggplot(df_comparison, aes(x = temp_feel, fill = Phase)) +
+  geom_density(alpha = 0.4) +
+  labs(
+    x = expression(beta[1]~"(koeficient teploty)"),
+    y = "Hustota",
+    title = "Evolúcia posterioru s pribúdajúcimi dátami"
+  ) +
+  theme_minimal()
+```
+
+---
+
+# Predvolené priory v rstanarm
+
+Keď nemáme silné priorové informácie, môžeme použiť **slabo informatívne priory**.
+
+## Syntax s autoscale
+
+```{r default-priors, cache=TRUE, results='hide'}
+bike_model_default <- stan_glm(
+  rides ~ temp_feel, 
+  data = bikes,
+  family = gaussian,
+  prior_intercept = normal(5000, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735
+)
+```
+
+## Upravené priory
+
+```{r prior-summary}
+prior_summary(bike_model_default)
+```
+
+`autoscale = TRUE` automaticky upraví škálu priorov podľa škály dát.
+
+## Slabo informatívne vs. vágne priory
+
+| Typ prioru | Charakteristika |
+|------------|-----------------|
+| **Vágny** | Extrémne plochý, zahŕňa aj nezmyselné hodnoty |
+| **Slabo informatívny** | Sústredený na rozumné hodnoty, ale stále neistý |
+
+Slabo informatívne priory vedú k:
+
+- Efektívnejšej MCMC simulácii
+- Stabilnejším výsledkom
+- Stále dominancii dát nad priorom
+
+---
+
+# Zhrnutie kapitoly
+
+## Bayesiánsky model jednoduchej lineárnej regresie
+
+$$\boxed{
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \sigma & \stackrel{ind}{\sim} N(\mu_i, \sigma^2) \quad \text{kde} \quad \mu_i = \beta_0 + \beta_1 X_i \\
+\beta_0 & \sim N(m_0, s_0^2) \\
+\beta_1 & \sim N(m_1, s_1^2) \\
+\sigma & \sim \text{Exp}(l)
+\end{aligned}
+}$$
+
+## Kľúčové koncepty
+
+1. **Lokálny priemer** $\mu_i = \beta_0 + \beta_1 X_i$ nahrádza globálny priemer $\mu$
+2. **Tri neznáme parametre**: $\beta_0$, $\beta_1$, $\sigma$
+3. **MCMC simulácia** aproximuje posteriorovú distribúciu
+4. **Posteriorová predikcia** zohľadňuje oba zdroje variability
+5. **Sekvenčná aktualizácia** umožňuje postupné učenie
+
+## Praktické tipy
+
+- Vždy skontrolujte MCMC diagnostiku (`neff_ratio`, `rhat`, trace plots)
+- Rozlišujte medzi odhadom priemeru a predikciou pre jednotlivca
+- Pri slabých priorových znalostiach použite `autoscale = TRUE`
+- Vizualizujte posteriorové modelové čiary pre lepšie pochopenie
+
+---
+
+# Príloha: Alternatívna simulácia pomocou rstan
+
+Pre záujemcov o nižšiu úroveň implementácie:
+
+```{r rstan-model, eval=FALSE}
+# KROK 1: Definícia modelu
+stan_bike_model <- "
+data {
+  int<lower = 0> n;
+  vector[n] Y;
+  vector[n] X;
+}
+parameters {
+  real beta0;
+  real beta1;
+  real<lower = 0> sigma;
+}
+model {
+  Y ~ normal(beta0 + beta1 * X, sigma);
+  beta0 ~ normal(-2000, 1000);
+  beta1 ~ normal(100, 40);
+  sigma ~ exponential(0.0008);
+}
+"
+
+# KROK 2: Simulácia
+stan_bike_sim <- stan(
+  model_code = stan_bike_model,
+  data = list(n = nrow(bikes), Y = bikes$rides, X = bikes$temp_feel),
+  chains = 4, iter = 5000*2, seed = 84735
+)
+```
+
+---
+
+*Tento materiál je založený na kapitole 9 knihy "Bayes Rules! An Introduction to Applied Bayesian Modeling" od Johnson, Ott a Dogucu.*

@@ -1,0 +1,807 @@
+---
+title: "Kapitola 16: (Normal) Hierarchické modely bez prediktorov"
+subtitle: "Bayes Rules! - Bayesiánska analýza"
+author: "Týždeň 12"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = "center"
+)
+```
+
+# Úvod do hierarchických modelov
+
+V tejto kapitole budeme stavať naše prvé hierarchické modely na základoch z kapitoly 15. Začneme jednoducho - predpokladáme, že máme nejakú premennú odozvy $Y$, ale žiadne prediktory $X$.
+
+## Príklad: Spotify popularita
+
+Platforma Spotify poskytuje poslucháčom prístup k viac ako 50 miliónom skladieb. Niektoré skladby sú populárnejšie ako iné. Nech $Y$ je hodnotenie popularity skladby na škále 0-100. Chceme pochopiť:
+
+- Aká je typická popularita skladby na Spotify?
+- Do akej miery sa popularita líši od umelca k umelcovi?
+- Pre jedného umelca, ako veľmi sa popularita môže líšiť od skladby k skladbe?
+
+## Načítanie balíčkov a dát
+
+```{r packages}
+# Nacitanie balickov
+library(bayesrules)
+library(tidyverse)
+library(rstanarm)
+library(bayesplot)
+library(tidybayes)
+library(broom.mixed)
+library(forcats)
+
+# Nacitanie dat
+data(spotify)
+```
+
+## Príprava dát
+
+```{r data-prep}
+# Vyber premennych a zoradenie umelcov podla priemernej popularity
+spotify <- spotify %>%
+  select(artist, title, popularity) %>%
+  mutate(artist = fct_reorder(artist, popularity, .fun = 'mean'))
+
+# Prve riadky
+head(spotify, 5)
+
+# Pocet skladieb
+cat("Pocet skladieb:", nrow(spotify), "\n")
+
+# Pocet umelcov
+cat("Pocet umelcov:", nlevels(spotify$artist), "\n")
+```
+
+## Hierarchická štruktúra dát
+
+Naše dáta majú **hierarchickú štruktúru**: 350 skladieb je rozdelených medzi 44 umelcov, ktorí boli vzorkovaní z populácie všetkých umelcov na Spotify.
+
+```{r artist-means}
+# Sumar pre kazdého umelca
+artist_means <- spotify %>%
+  group_by(artist) %>%
+  summarize(count = n(), popularity = mean(popularity))
+
+# Umelci s najnizsou a najvyssou popularitou
+artist_means %>%
+  slice(1:2, 43:44)
+```
+
+# Complete Pooled Model (Úplne zlúčený model)
+
+## Notácia
+
+- $n_j$ = počet skladieb pre umelca $j$, kde $j \in \{1,2,\ldots,44\}$
+- $Y_{ij}$ = popularita $i$-tej skladby umelca $j$
+- Celková veľkosť vzorky: $n = \sum_{j=1}^{44} n_j = 350$
+
+## Vizualizácia poolovaných dát
+
+```{r complete-pool-viz}
+ggplot(spotify, aes(x = popularity)) +
+  geom_density(fill = "steelblue", alpha = 0.7) +
+  labs(title = "Distribúcia popularity všetkých skladieb (complete pooling)",
+       x = "Popularita",
+       y = "Hustota") +
+  theme_minimal()
+```
+
+## Model
+
+Complete pooled model **ignoruje** skupinovú štruktúru dát a zlučuje všetky skladby dohromady:
+
+$$
+\begin{aligned}
+Y_{ij} | \mu, \sigma & \sim N(\mu, \sigma^2) \\
+\mu & \sim N(50, 52^2) \\
+\sigma & \sim \text{Exp}(0.048)
+\end{aligned}
+$$
+
+Parametre:
+
+- $\mu$ = **globálny priemer** popularity (rovnaký pre všetkých umelcov)
+- $\sigma$ = **globálna smerodajná odchýlka** popularity od skladby k skladbe
+
+## Simulácia posteriori
+
+```{r complete-pooled-model}
+spotify_complete_pooled <- stan_glm(
+  popularity ~ 1,  # intercept-only model
+  data = spotify, 
+  family = gaussian,
+  prior_intercept = normal(50, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  refresh = 0
+)
+
+# Priori specifikacie
+prior_summary(spotify_complete_pooled)
+```
+
+## Posteriori sumár
+
+```{r complete-pooled-summary}
+complete_summary <- tidy(spotify_complete_pooled,
+                         effects = c("fixed", "aux"),
+                         conf.int = TRUE, 
+                         conf.level = 0.80)
+complete_summary
+```
+
+**Interpretácia**: Typická skladba má popularitu okolo 58.4 bodov so smerodajnou odchýlkou približne 20.7 bodov.
+
+## Problém complete pooling
+
+```{r complete-pooled-pred}
+set.seed(84735)
+predictions_complete <- posterior_predict(spotify_complete_pooled,
+                                          newdata = artist_means)
+
+ppc_intervals(artist_means$popularity, 
+              yrep = predictions_complete,
+              prob_outer = 0.80) +
+  scale_x_continuous(labels = artist_means$artist,
+                     breaks = 1:nrow(artist_means)) +
+  xaxis_text(angle = 90, hjust = 1) +
+  labs(title = "Complete pooled model: Predikcie pre všetkých umelcov sú rovnaké",
+       subtitle = "Tmavé body = pozorované priemery, svetlé intervaly = posteriori prediktívne intervaly") +
+  theme_minimal()
+```
+
+**Problém**: Model predpovedá rovnakú popularitu pre všetkých umelcov, hoci vieme, že sa líšia!
+
+---
+
+# No Pooled Model (Model bez zdieľania)
+
+## Vizualizácia variability medzi umelcami
+
+```{r no-pool-viz}
+ggplot(spotify, aes(x = popularity, color = artist)) +
+  geom_density() +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Distribúcia popularity pre každého umelca (no pooling)",
+       x = "Popularita",
+       y = "Hustota")
+```
+
+## Model
+
+No pooled model má **skupinovo-špecifické parametre** $\mu_j$ pre každého umelca:
+
+$$
+\begin{aligned}
+Y_{ij} | \mu_j, \sigma & \sim N(\mu_j, \sigma^2) \\
+\mu_j & \sim N(50, s_j^2) \\
+\sigma & \sim \text{Exp}(0.048)
+\end{aligned}
+$$
+
+Parametre:
+
+- $\mu_j$ = **priemerná popularita pre umelca** $j$ (rôzna pre každého)
+- $\sigma$ = smerodajná odchýlka od skladby k skladbe **v rámci** každého umelca
+
+## Vizualizácia predpokladov modelu
+
+```{r no-pool-assumption-viz}
+# Ilustracia: Rozne mu_j, rovnake sigma
+set.seed(123)
+example_data <- tibble(
+  artist = rep(c("Umelec 1", "Umelec 2", "Umelec 3", "Umelec 4", "Umelec 5"), each = 100),
+  mu = rep(c(30, 45, 55, 65, 80), each = 100),
+  x = c(rnorm(100, 30, 12), rnorm(100, 45, 12), rnorm(100, 55, 12), 
+        rnorm(100, 65, 12), rnorm(100, 80, 12))
+)
+
+ggplot(example_data, aes(x = x, fill = artist)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Ilustrácia no pooled modelu",
+       subtitle = expression(paste("Rôzne ", mu[j], ", rovnaké ", sigma)),
+       x = "Popularita",
+       y = "Hustota") +
+  theme_minimal()
+```
+
+## Simulácia posteriori
+
+```{r no-pooled-model}
+spotify_no_pooled <- stan_glm(
+  popularity ~ artist - 1,  # -1 odstrani globalny intercept
+  data = spotify, 
+  family = gaussian,
+  prior = normal(50, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  refresh = 0
+)
+```
+
+## Posteriori predikcie
+
+```{r no-pooled-pred}
+set.seed(84735)
+predictions_no <- posterior_predict(spotify_no_pooled, 
+                                    newdata = artist_means)
+
+ppc_intervals(artist_means$popularity, 
+              yrep = predictions_no,
+              prob_outer = 0.80) +
+  scale_x_continuous(labels = artist_means$artist,
+                     breaks = 1:nrow(artist_means)) +
+  xaxis_text(angle = 90, hjust = 1) +
+  labs(title = "No pooled model: Predikcie centrovane na pozorovanom priemere",
+       subtitle = "Tmavé body = pozorované priemery, svetlé intervaly = posteriori prediktívne intervaly") +
+  theme_minimal()
+```
+
+## Problémy no pooling
+
+1. **Ignoruje informácie z iných umelcov** - problematické pri malých vzorkách
+2. **Nemôže generalizovať** na nových umelcov (napr. Mohsen Beats)
+
+---
+
+# Hierarchický model
+
+## Tri vrstvy modelu
+
+Hierarchický model má tri vrstvy:
+
+$$
+\begin{array}{lrl}
+\text{Vrstva 1:} & Y_{ij} | \mu_j, \sigma_y & \sim \text{model variability VNÚTRI umelca } j \\
+\text{Vrstva 2:} & \mu_j | \mu, \sigma_\mu & \sim \text{model variability MEDZI umelcami}\\
+\text{Vrstva 3:} & \mu, \sigma_y, \sigma_\mu & \sim \text{priori modely pre globálne parametre}
+\end{array}
+$$
+
+## Vrstva 1: Variabilita vnútri skupín
+
+$$Y_{ij} | \mu_j, \sigma_y \sim N(\mu_j, \sigma_y^2)$$
+
+- $\mu_j$ = priemerná popularita pre umelca $j$
+- $\sigma_y$ = **within-group variability** (variabilita od skladby k skladbe v rámci umelca)
+
+## Vrstva 2: Variabilita medzi skupinami
+
+$$\mu_j | \mu, \sigma_\mu \sim N(\mu, \sigma_\mu^2)$$
+
+- $\mu$ = **globálny priemer** popularity naprieč všetkými umelcami
+- $\sigma_\mu$ = **between-group variability** (variabilita priemernej popularity od umelca k umelcovi)
+
+```{r between-group-viz}
+ggplot(artist_means, aes(x = popularity)) +
+  geom_density(fill = "coral", alpha = 0.7) +
+  labs(title = "Distribúcia priemernej popularity medzi umelcami",
+       subtitle = "Vrstva 2: Variabilita medzi skupinami",
+       x = "Priemerná popularita umelca",
+       y = "Hustota") +
+  theme_minimal()
+```
+
+## Vrstva 3: Priori modely
+
+$$
+\begin{aligned}
+\mu & \sim N(50, 52^2) \\
+\sigma_y & \sim \text{Exp}(0.048) \\
+\sigma_\mu & \sim \text{Exp}(1)
+\end{aligned}
+$$
+
+## Kompletný hierarchický model (One-way ANOVA)
+
+$$
+\begin{aligned}
+Y_{ij} | \mu_j, \sigma_y & \sim N(\mu_j, \sigma_y^2) & \text{(variabilita vnútri umelca } j\text{)} \\
+\mu_j | \mu, \sigma_\mu & \stackrel{ind}{\sim} N(\mu, \sigma_\mu^2) & \text{(variabilita medzi umelcami)}\\
+\mu & \sim N(50, 52^2) & \text{(priori pre globálne parametre)} \\
+\sigma_y & \sim \text{Exp}(0.048) & \\
+\sigma_\mu & \sim \text{Exp}(1) &
+\end{aligned}
+$$
+
+## Alternatívna formulácia s "tweaks"
+
+Môžeme prepísať $\mu_j$ ako úpravu globálneho priemeru:
+
+$$\mu_j = \mu + b_j$$
+
+kde $b_j$ predstavuje **odchýlku** umelca $j$ od globálneho priemeru:
+
+$$
+\begin{aligned}
+Y_{ij} | \mu_j, \sigma_y & \sim N(\mu_j, \sigma_y^2) \quad \text{s} \quad \mu_j = \mu + b_j \\
+b_j | \sigma_\mu & \stackrel{ind}{\sim} N(0, \sigma_\mu^2) \\
+\mu & \sim N(50, 52^2) \\
+\sigma_y & \sim \text{Exp}(0.048) \\
+\sigma_\mu & \sim \text{Exp}(1)
+\end{aligned}
+$$
+
+---
+
+# Variabilita vnútri vs medzi skupinami
+
+## Rozklad variancie
+
+Celková variancia v $Y$ sa skladá z dvoch častí:
+
+$$\text{Var}(Y_{ij}) = \sigma_y^2 + \sigma_\mu^2$$
+
+Proporcionálne:
+
+$$
+\begin{aligned}
+\frac{\sigma_y^2}{\sigma_\mu^2 + \sigma_y^2} & = \text{podiel variancie vysvetlený rozdielmi VNÚTRI skupín} \\
+\frac{\sigma_\mu^2}{\sigma_\mu^2 + \sigma_y^2} & = \text{podiel variancie vysvetlený rozdielmi MEDZI skupinami}
+\end{aligned}
+$$
+
+## Korelácia vnútri skupín
+
+Korelácia medzi dvoma pozorovaniami $i$ a $k$ z rovnakej skupiny $j$:
+
+$$\text{Cor}(Y_{ij}, Y_{kj}) = \frac{\sigma_\mu^2}{\sigma_\mu^2 + \sigma_y^2}$$
+
+## Vizualizácia rôznych scenárov
+
+```{r variance-scenarios}
+# Tri scenare
+set.seed(42)
+n_per_group <- 200
+
+# Scenar A: sigma_mu >> sigma_y (velke rozdiely medzi skupinami)
+scenario_a <- tibble(
+  scenario = "A: σ_μ >> σ_y",
+  group = rep(c("Skupina 1", "Skupina 2"), each = n_per_group),
+  y = c(rnorm(n_per_group, 30, 5), rnorm(n_per_group, 70, 5))
+)
+
+# Scenar B: sigma_mu ≈ sigma_y
+scenario_b <- tibble(
+  scenario = "B: σ_μ ≈ σ_y",
+  group = rep(c("Skupina 1", "Skupina 2"), each = n_per_group),
+  y = c(rnorm(n_per_group, 40, 15), rnorm(n_per_group, 60, 15))
+)
+
+# Scenar C: sigma_mu << sigma_y (male rozdiely medzi skupinami)
+scenario_c <- tibble(
+  scenario = "C: σ_μ << σ_y",
+  group = rep(c("Skupina 1", "Skupina 2"), each = n_per_group),
+  y = c(rnorm(n_per_group, 48, 20), rnorm(n_per_group, 52, 20))
+)
+
+all_scenarios <- bind_rows(scenario_a, scenario_b, scenario_c)
+
+ggplot(all_scenarios, aes(x = y, fill = group)) +
+  geom_density(alpha = 0.6) +
+  facet_wrap(~scenario, ncol = 3) +
+  labs(title = "Tri scenáre pomeru within/between variability",
+       x = "Y",
+       y = "Hustota",
+       fill = "Skupina") +
+  theme_minimal()
+```
+
+---
+
+# Posteriori analýza hierarchického modelu
+
+## Simulácia posteriori
+
+Model má **47 parametrov**: 44 skupinovo-špecifických ($\mu_j$) a 3 globálne ($\mu, \sigma_y, \sigma_\mu$).
+
+```{r hierarchical-model}
+spotify_hierarchical <- stan_glmer(
+  popularity ~ (1 | artist),  # (1 | artist) definuje skupinovu strukturu
+  data = spotify, 
+  family = gaussian,
+  prior_intercept = normal(50, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  refresh = 0
+)
+
+# Priori specifikacie
+prior_summary(spotify_hierarchical)
+```
+
+## MCMC diagnostika
+
+```{r mcmc-diag, fig.height=8}
+# Trace plots pre globalne parametre
+mcmc_trace(spotify_hierarchical, 
+           pars = c("(Intercept)", "sigma", 
+                    "Sigma[artist:(Intercept),(Intercept)]")) +
+  labs(title = "Trace plots pre globálne parametre")
+```
+
+```{r mcmc-dens}
+mcmc_dens_overlay(spotify_hierarchical,
+                  pars = c("(Intercept)", "sigma")) +
+  labs(title = "Density plots pre μ a σ_y")
+```
+
+## Posterior predictive check
+
+```{r pp-check}
+pp_check(spotify_hierarchical, nreps = 50) +
+  labs(title = "Posterior predictive check",
+       subtitle = "Svetlomodré = simulované dáta, tmavomodré = pozorované dáta")
+```
+
+## Štruktúra výstupu
+
+```{r output-structure}
+spotify_hierarchical_df <- as.data.frame(spotify_hierarchical)
+
+# Nazvy parametrov
+spotify_hierarchical_df %>%
+  colnames() %>%
+  as.data.frame() %>%
+  slice(1:3, 45:47)
+```
+
+Vysvetlenie labelov:
+
+- `(Intercept)` = $\mu$ (globálny priemer)
+- `b[(Intercept) artist:j]` = $b_j$ (odchýlka umelca $j$ od globálneho priemeru)
+- `sigma` = $\sigma_y$ (within-group SD)
+- `Sigma[artist:(Intercept),(Intercept)]` = $\sigma_\mu^2$ (between-group variancia)
+
+---
+
+# Analýza globálnych parametrov
+
+## Posteriori pre $\mu$
+
+```{r global-mu}
+tidy(spotify_hierarchical, 
+     effects = "fixed",
+     conf.int = TRUE, 
+     conf.level = 0.80)
+```
+
+**Interpretácia**: S 80% istotou môžeme povedať, že priemerný umelec má priemernú popularitu medzi 49.3 a 55.7.
+
+## Posteriori pre $\sigma_y$ a $\sigma_\mu$
+
+```{r global-sigma}
+tidy(spotify_hierarchical, effects = "ran_pars")
+```
+
+**Interpretácia**:
+
+- $\sigma_y \approx 14.0$ = v rámci jedného umelca sa popularita líši o ~14 bodov od skladby k skladbe
+- $\sigma_\mu \approx 15.1$ = priemerná popularita sa líši o ~15.1 bodov od umelca k umelcovi
+
+## Výpočet korelácie a podielu variancie
+
+```{r variance-decomposition}
+# Posteriorné mediány
+sigma_y <- 14.0
+sigma_mu <- 15.1
+
+# Korealcia vnutri skupin
+correlation <- sigma_mu^2 / (sigma_mu^2 + sigma_y^2)
+cat("Korelácia vnútri skupín:", round(correlation, 3), "\n")
+
+# Podiel variancie vysvetleny rozdielmi medzi umelcami
+between_var_prop <- sigma_mu^2 / (sigma_mu^2 + sigma_y^2)
+cat("Podiel variancie (medzi umelcami):", round(between_var_prop * 100, 1), "%\n")
+
+# Podiel variancie vysvetleny rozdielmi vnutri umelcov
+within_var_prop <- sigma_y^2 / (sigma_mu^2 + sigma_y^2)
+cat("Podiel variancie (vnútri umelcov):", round(within_var_prop * 100, 1), "%\n")
+```
+
+---
+
+# Analýza skupinovo-špecifických parametrov
+
+## Posteriori pre $b_j$ (tweaks)
+
+```{r artist-tweaks}
+artist_summary <- tidy(spotify_hierarchical, 
+                       effects = "ran_vals",
+                       conf.int = TRUE, 
+                       conf.level = 0.80)
+
+# Prve a posledne 2
+artist_summary %>%
+  select(level, estimate, conf.low, conf.high) %>%
+  slice(1:2, 43:44)
+```
+
+**Interpretácia**: 
+
+- Camilo: s 80% istotou je jeho priemerná popularita 19.4-32.4 bodov **nad** globálnym priemerom
+- Mia X: s 80% istotou je jej priemerná popularita 23.4-40.7 bodov **pod** globálnym priemerom
+
+## Výpočet $\mu_j = \mu + b_j$
+
+```{r mu-j-calculation}
+# Ziskanie MCMC retazcov pre kazde mu_j
+artist_chains <- spotify_hierarchical %>%
+  spread_draws(`(Intercept)`, b[,artist]) %>%
+  mutate(mu_j = `(Intercept)` + b)
+
+# Priklad
+artist_chains %>%
+  select(artist, `(Intercept)`, b, mu_j) %>%
+  head(4)
+```
+
+## Posteriori sumár pre $\mu_j$
+
+```{r mu-j-summary}
+artist_summary_scaled <- artist_chains %>%
+  select(-`(Intercept)`, -b) %>%
+  mean_qi(.width = 0.80) %>%
+  mutate(artist = fct_reorder(artist, mu_j))
+
+# Priklad
+artist_summary_scaled %>%
+  select(artist, mu_j, .lower, .upper) %>%
+  head(4)
+```
+
+## Vizualizácia 80% kredibilných intervalov
+
+```{r mu-j-plot, fig.height=10}
+ggplot(artist_summary_scaled,
+       aes(x = artist, y = mu_j, ymin = .lower, ymax = .upper)) +
+  geom_pointrange(color = "steelblue") +
+  coord_flip() +
+  labs(title = "80% posteriori kredibilné intervaly pre μ_j",
+       subtitle = "Priemerná popularita pre každého umelca",
+       x = "Umelec",
+       y = "μ_j") +
+  theme_minimal()
+```
+
+## Prečo sa šírky intervalov líšia?
+
+```{r interval-width-explanation}
+# Porovnanie Lil Skies a Frank Ocean
+artist_means %>%
+  filter(artist %in% c("Lil Skies", "Frank Ocean"))
+```
+
+**Vysvetlenie**: Frank Ocean má 40 skladieb, Lil Skies iba 3. Preto máme väčšiu istotu o Frankovej priemernej popularite a užšie intervaly.
+
+---
+
+# Posteriori predikcia
+
+## Predikcia pre pozorovaného umelca (Frank Ocean)
+
+Pre umelca v našej vzorke používame **Vrstvu 1**:
+
+$$Y_{\text{new},j}^{(i)} | \mu_j, \sigma_y \sim N\left(\mu_j^{(i)}, \left(\sigma_y^{(i)}\right)^2\right)$$
+
+```{r pred-ocean-manual}
+set.seed(84735)
+ocean_chains <- spotify_hierarchical_df %>%
+  rename(b = `b[(Intercept) artist:Frank_Ocean]`) %>%
+  select(`(Intercept)`, b, sigma) %>%
+  mutate(mu_ocean = `(Intercept)` + b,
+         y_ocean = rnorm(20000, mean = mu_ocean, sd = sigma))
+
+# Posteriorny predikcny sumar
+ocean_chains %>%
+  mean_qi(y_ocean, .width = 0.80)
+```
+
+**Porovnanie**: 80% interval pre $Y_{\text{new}}$ (51.3, 87.6) je **širší** ako pre $\mu_j$ (66.6, 72.2) - prirodzene máme väčšiu neistotu o jednotlivej skladbe ako o priemere.
+
+## Predikcia pre nepozorovaného umelca (Mohsen Beats)
+
+Pre nového umelca potrebujeme **dva kroky**:
+
+**Krok 1**: Simuluj potenciálnu priemernú popularitu z Vrstvy 2:
+$$\mu_{\text{mohsen}}^{(i)} | \mu, \sigma_\mu \sim N\left(\mu^{(i)}, \left(\sigma_\mu^{(i)}\right)^2\right)$$
+
+**Krok 2**: Simuluj predikciu z Vrstvy 1:
+$$Y_{\text{new},\text{mohsen}}^{(i)} | \mu_{\text{mohsen}}, \sigma_y \sim N\left(\mu_{\text{mohsen}}^{(i)}, \left(\sigma_y^{(i)}\right)^2\right)$$
+
+```{r pred-mohsen-manual}
+set.seed(84735)
+mohsen_chains <- spotify_hierarchical_df %>%
+  mutate(sigma_mu = sqrt(`Sigma[artist:(Intercept),(Intercept)]`),
+         mu_mohsen = rnorm(20000, `(Intercept)`, sigma_mu),
+         y_mohsen = rnorm(20000, mu_mohsen, sigma))
+
+# Posteriorny predikcny sumar
+mohsen_chains %>%
+  mean_qi(y_mohsen, .width = 0.80)
+```
+
+## Zdroje neistoty
+
+Pre **pozorovaného umelca** (Frank Ocean):
+
+1. Within-group sampling variability (nie všetky skladby sú rovnako populárne)
+2. Posteriori variabilita v $\mu_j$ a $\sigma_y$
+
+Pre **nepozorovaného umelca** (Mohsen Beats):
+
+1. Within-group sampling variability
+2. **Between-group sampling variability** (nie všetci umelci sú rovnako populárni)
+3. Posteriori variabilita v globálnych parametroch
+
+## Porovnanie pomocou posterior_predict()
+
+```{r pred-comparison}
+set.seed(84735)
+prediction_shortcut <- posterior_predict(
+  spotify_hierarchical,
+  newdata = data.frame(artist = c("Frank Ocean", "Mohsen Beats"))
+)
+
+mcmc_areas(prediction_shortcut, prob = 0.8) +
+  scale_y_discrete(labels = c("Frank Ocean", "Mohsen Beats")) +
+  labs(title = "Posteriori prediktívne modely",
+       subtitle = "80% intervaly",
+       x = "Predikovaná popularita") +
+  theme_minimal()
+```
+
+**Interpretácia**:
+
+- Frank Ocean: očakávame vyššiu popularitu (máme dáta)
+- Mohsen Beats: väčšia neistota (nemáme dáta)
+
+---
+
+# Shrinkage a bias-variance trade-off
+
+## Posteriori predikcie pre všetkých umelcov
+
+```{r hierarchical-all-pred, fig.height=10}
+set.seed(84735)
+predictions_hierarchical <- posterior_predict(spotify_hierarchical,
+                                              newdata = artist_means)
+
+ppc_intervals(artist_means$popularity, 
+              yrep = predictions_hierarchical,
+              prob_outer = 0.80) +
+  scale_x_continuous(labels = artist_means$artist,
+                     breaks = 1:nrow(artist_means)) +
+  xaxis_text(angle = 90, hjust = 1) +
+  geom_hline(yintercept = 58.4, linetype = "dashed", color = "red") +
+  labs(title = "Hierarchický model: Shrinkage k globálnemu priemeru",
+       subtitle = "Čiarkovaná čiara = globálny priemer (58.4)") +
+  theme_minimal()
+```
+
+## Čo je shrinkage?
+
+**Shrinkage** je fenomén, pri ktorom sú skupinovo-špecifické odhady **stiahnuté** smerom k globálnemu priemeru.
+
+Hierarchické predikcie sú (približne) **vážené priemery**:
+
+$$\frac{\sigma_y^2}{\sigma_y^2 + n_j \sigma_\mu^2} \bar{y}_{\text{global}} + \frac{n_j\sigma_\mu^2}{\sigma_y^2 + n_j \sigma_\mu^2} \bar{y}_j$$
+
+## Kedy je shrinkage väčší?
+
+1. **Keď $n_j$ klesá** - menej dát o skupine = viac spoliehania na globálne trendy
+2. **Keď $\sigma_y >> \sigma_\mu$** - malé rozdiely medzi skupinami = viac spoliehania na globálne trendy
+
+## Príklad: Camila Cabello vs Lil Skies
+
+```{r shrinkage-example}
+artist_means %>%
+  filter(artist %in% c("Camila Cabello", "Lil Skies"))
+```
+
+Lil Skies má len 3 skladby, preto jeho predikcia je viac "stiahnutá" k globálnemu priemeru.
+
+## Bias-Variance Trade-off
+
+| Model | Bias | Variancia | Popis |
+|-------|------|-----------|-------|
+| Complete pooled | Vysoký | Nízka | Rigidný, ignoruje skupiny |
+| No pooled | Nízky | Vysoká | Flexibilný, ale nestabilný |
+| **Hierarchický** | **Stredný** | **Stredná** | **Vyvážený** |
+
+---
+
+# Kedy použiť hierarchický model?
+
+## Skupinová premenná vs prediktor
+
+| Charakteristika | Prediktor | Skupinová premenná |
+|-----------------|-----------|-------------------|
+| Pokrytie kategórií | Všetky kategórie záujmu | Náhodná vzorka z mnohých |
+| Príklad | `weekend` (TRUE/FALSE) | `artist` (44 z tisícov) |
+| Model | Regresia s prediktorom | Hierarchický model |
+
+## Príklad: Weekend vs Artist
+
+```{r predictor-vs-grouping}
+# Weekend - všetky kategórie pokryté -> prediktor
+data(bikes)
+bikes %>%
+  group_by(weekend) %>%
+  tally()
+
+# Artist - len vzorka -> skupinová premenná
+cat("\nPočet umelcov v dátach:", nlevels(spotify$artist), 
+    "z tisícov na Spotify")
+```
+
+---
+
+# Zhrnutie kapitoly
+
+## Hierarchický model (One-way ANOVA)
+
+Pre $m$ skupín s $n_j$ pozorovaniami v každej:
+
+$$
+\begin{aligned}
+Y_{ij} | \mu_j, \sigma_y & \sim N(\mu_j, \sigma_y^2) & \text{(vnútri skupiny } j\text{)} \\
+\mu_j | \mu, \sigma_\mu & \stackrel{ind}{\sim} N(\mu, \sigma_\mu^2) & \text{(medzi skupinami)}\\
+\mu & \sim N(m, s^2) & \text{(priori pre globálne parametre)} \\
+\sigma_y & \sim \text{Exp}(l_y) & \\
+\sigma_\mu & \sim \text{Exp}(l_\mu) &
+\end{aligned}
+$$
+
+## Výhody hierarchického modelu
+
+1. **Uznáva koreláciu** medzi pozorovaniami v rámci skupiny
+2. **Skupinovo-špecifické parametre** $\mu_j$ poskytujú insight do skupinových trendov
+3. **Globálne parametre** $(\mu, \sigma_y, \sigma_\mu)$ poskytujú insight do celej populácie
+4. **Borrowing strength** - učenie sa o jednej skupine využíva informácie z ostatných
+5. **Shrinkage** - sťahovanie lokálnych odhadov ku globálnym trendom
+6. **Vyvážený bias-variance trade-off**
+
+## Kľúčové vzorce
+
+| Veličina | Vzorec |
+|----------|--------|
+| Celková variancia | $\text{Var}(Y_{ij}) = \sigma_y^2 + \sigma_\mu^2$ |
+| Korelácia vnútri skupín | $\text{Cor}(Y_{ij}, Y_{kj}) = \frac{\sigma_\mu^2}{\sigma_\mu^2 + \sigma_y^2}$ |
+| Podiel variancie (medzi) | $\frac{\sigma_\mu^2}{\sigma_\mu^2 + \sigma_y^2}$ |
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

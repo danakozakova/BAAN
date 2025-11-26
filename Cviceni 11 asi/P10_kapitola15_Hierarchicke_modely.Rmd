@@ -1,0 +1,726 @@
+---
+title: "Kapitola 15: Hierarchické modely sú vzrušujúce"
+subtitle: "Bayes Rules! - Úvod do hierarchického modelovania"
+author: "Bayesiánska analýza"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE,
+  fig.width = 10, 
+  fig.height = 6,
+  fig.align = "center"
+)
+```
+
+# Vitajte v Unit 4!
+
+Unit 4 je celý o **hierarchiách**. Keď použijeme slovo "hierarchický" vo vete "moje pracovisko je tak hierarchické," môže mať negatívne konotácie. Naopak, "môj Bayesiánsky model je tak hierarchický" často znamená niečo dobré! 
+
+**Hierarchické modely** výrazne rozširujú flexibilitu nášho modelovacieho nástroja tým, že zohľadňujú hierarchické alebo **zoskupené dáta**. Napríklad naše dáta môžu pozostávať z:
+
+- **vzorkovanej skupiny škôl** a dát $y$ o viacerých jednotlivých študentoch v každej škole
+- **vzorkovanej skupiny laboratórií** a dát $y$ z viacerých individuálnych experimentov v každom laboratóriu  
+- **vzorkovanej skupiny ľudí**, na ktorých robíme viaceré individuálne pozorovania informácií $y$ v čase
+
+Ignorovanie tohto typu základnej zoskupovacej štruktúry porušuje predpoklad **nezávislých dát** za našimi modelmi z Unit 3 a môže viesť k zavádzajúcim záverom.
+
+## Prehľad Unit 4
+
+- **Kapitola 15**: Prečo by ste mali byť nadšení z hierarchického modelovania
+- **Kapitola 16**: (Normálne) hierarchické modely bez prediktorov
+- **Kapitola 17**: (Normálne) hierarchické modely s prediktormi
+- **Kapitola 18**: Ne-normálne hierarchické modely
+- **Kapitola 19**: Pridávanie ďalších vrstiev
+
+## Terminológia
+
+Používame "hierarchický" ako všeobecný pojem pre modely so skupinovou štruktúrou. V literatúre sa tieto modely označujú ako:
+
+- **Multilevel models** (viacúrovňové modely)
+- **Mixed effects models** (modely so zmiešanými efektmi)
+- **Random effects models** (modely s náhodnými efektmi)
+
+Tieto termíny sa niekedy používajú zameniteľne, inokedy označujú mierne odlišnosti.
+
+---
+
+# Načítanie dát a balíkov
+
+```{r load-packages}
+# Načítanie balíkov
+library(bayesrules)
+library(tidyverse)
+library(rstanarm)
+library(broom.mixed)
+library(patchwork)
+```
+
+## Cherry Blossom dáta
+
+Budeme skúmať dátovú sadu `cherry_blossom_sample` z balíka `bayesrules`. Tieto dáta obsahujú časy behu (v minútach) pre 36 účastníkov výročného 10-míľového behu Cherry Blossom vo Washingtone, D.C.
+
+```{r load-data}
+# Načítanie dát
+data(cherry_blossom_sample)
+
+# Príprava dát
+running <- cherry_blossom_sample %>% 
+  select(runner, age, net)
+
+# Rozmery dát
+cat("Počet pozorovaní:", nrow(running), "\n")
+cat("Počet bežcov:", n_distinct(running$runner), "\n")
+```
+
+```{r preview-data}
+# Náhľad dát
+head(running, 10)
+```
+
+**Charakteristika bežcov:**
+
+- Každý bežec je vo veku 50-60 rokov
+- Každý bežec sa zúčastnil pretekov vo viacerých rokoch
+- `net` = čistý čas behu v minútach
+- `age` = vek bežca v danom roku
+
+## Exploratívna vizualizácia
+
+```{r boxplot-runners, fig.cap="Boxploty času behu pre 36 bežcov"}
+ggplot(running, aes(x = factor(runner), y = net)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  labs(
+    title = "Časy behu pre 36 bežcov v Cherry Blossom pretekoch",
+    subtitle = "Každý bežec má viaceré pozorovania z rôznych rokov",
+    x = "Bežec (ID)",
+    y = "Čas behu (minúty)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 7))
+```
+
+**Pozorovania z grafu:**
+
+- Existuje veľká variabilita medzi bežcami (niektorí sú rýchlejší ako iní)
+- Existuje variabilita v časoch každého bežca z roka na rok
+- Napríklad bežec 17 má tendenciu k pomalším časom s veľkou variabilitou
+- Bežec 29 je najrýchlejší s veľmi konzistentnými časmi
+
+**Náš cieľ:** Lepšie porozumieť vzťahu medzi **časom behu a vekom** pre bežcov v tejto vekovej skupine.
+
+---
+
+# Complete Pooling (Úplné zlúčenie)
+
+## Koncept
+
+Začneme analýzu vzťahu medzi časom behu a vekom pomocou techniky **complete pooling**: 
+
+> Zlúčime všetkých 252 pozorovaní z 36 bežcov do jedného "bazéna" informácií.
+
+```{r scatter-complete-pooling, fig.cap="Scatterplot času behu vs. veku - všetky pozorovania"}
+ggplot(running, aes(x = age, y = net)) +
+  geom_point(alpha = 0.6, color = "steelblue") +
+  labs(
+    title = "Complete Pooling: Všetky pozorovania zlúčené",
+    subtitle = "Vzťah medzi časom behu a vekom sa zdá byť slabý",
+    x = "Vek (roky)",
+    y = "Čas behu (minúty)"
+  ) +
+  theme_minimal()
+```
+
+**Pozorujeme:** Vzťah sa zdá byť slabý - existuje veľká variabilita v časoch behu pri každom veku bez jasného trendu.
+
+## Matematická formulácia
+
+Nech $Y_i$ a $X_i$ označujú čas behu a vek pre $i$-te pozorovanie v našej dátovej sade. Štruktúra dát pre **complete pooled model** je:
+
+$$
+\begin{equation}
+Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N\left(\mu_i, \sigma^2\right) \quad \text{kde} \quad \mu_i = \beta_0 + \beta_1 X_i
+\tag{15.1}
+\end{equation}
+$$
+
+**Parametre modelu:**
+
+- $\beta_0$ = intercept (priemerný čas behu pri veku 0)
+- $\beta_1$ = slope (zmena času behu za každý rok veku)
+- $\sigma$ = štandardná odchýlka reziduálov
+
+## Simulácia modelu
+
+```{r complete-pooled-model, cache=TRUE, results='hide'}
+complete_pooled_model <- stan_glm(
+  net ~ age,
+  data = running, 
+  family = gaussian,
+  prior_intercept = normal(0, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735
+)
+```
+
+## Výsledky
+
+```{r complete-pooled-summary}
+# Posteriorné súhrnné štatistiky
+tidy(complete_pooled_model, conf.int = TRUE, conf.level = 0.80)
+```
+
+**Interpretácia výsledkov:**
+
+- **Intercept** ≈ 75.2: Odhadovaný čas behu pri veku 0 (nemá praktický zmysel)
+- **Slope (age)** ≈ 0.27: Časy behu majú tendenciu narastať o ~0.27 minúty za každý rok veku
+- **80% Credible Interval pre $\beta_1$**: obsahuje 0, čo naznačuje, že vzťah **nie je štatisticky významný**
+
+## Problém s Complete Pooling
+
+```{r gray-lines, fig.cap="Individuálne trendy (šedé) vs. Complete Pooled model (modrý)"}
+# Získanie posteriorných odhadov
+coef_pooled <- coef(complete_pooled_model)
+intercept_pooled <- coef_pooled[1]
+slope_pooled <- coef_pooled[2]
+
+ggplot(running, aes(x = age, y = net, group = runner)) +
+  geom_smooth(method = "lm", se = FALSE, color = "gray", linewidth = 0.5) +
+  geom_abline(
+    intercept = intercept_pooled, 
+    slope = slope_pooled, 
+    color = "blue", 
+    linewidth = 1.2
+  ) +
+  labs(
+    title = "Complete Pooling úplne zlyháva!",
+    subtitle = "Šedé čiary = individuálne trendy | Modrá čiara = complete pooled model",
+    x = "Vek (roky)",
+    y = "Čas behu (minúty)"
+  ) +
+  theme_minimal()
+```
+
+**Kritické pozorovanie:** 
+
+- Takmer všetci individuálni bežci (šedé čiary) sa spomaľujú s vekom (pozitívny sklon)
+- Complete pooled model (modrá čiara) túto skutočnosť nezachytáva!
+
+## Detailný pohľad na 3 bežcov
+
+```{r three-runners, fig.cap="Detaily pre 3 príkladových bežcov"}
+# Výber príkladových bežcov
+examples <- running %>% 
+  filter(runner %in% c("1", "20", "22"))
+
+ggplot(examples, aes(x = age, y = net)) +
+  geom_point(size = 3, color = "steelblue") +
+  facet_wrap(~ runner, labeller = labeller(runner = function(x) paste("Bežec", x))) +
+  geom_abline(
+    intercept = intercept_pooled, 
+    slope = slope_pooled,
+    color = "blue", 
+    linewidth = 1
+  ) +
+  labs(
+    title = "Complete Pooled model (modrý) pre 3 bežcov",
+    x = "Vek (roky)",
+    y = "Čas behu (minúty)"
+  ) +
+  theme_minimal()
+```
+
+**Pozorovania:**
+
+- **Bežec 1**: Konzistentne rýchlejší ako priemer, dáta pod modrou čiarou
+- **Bežec 20**: Pomalší a spomaľuje sa rýchlejšie, dáta nad modrou čiarou
+- **Bežec 22**: Model je približne správny
+
+## Diagram Complete Pooling
+
+```{r diagram-complete-pool, echo=FALSE, fig.height=3, fig.cap="Schéma Complete Pooling prístupu"}
+# Vizualizácia konceptu
+diagram_data <- tibble(
+  level = c(rep("Populácia", 1), rep("Pozorovania", 7)),
+  x = c(0, seq(-3, 3, length.out = 7)),
+  y = c(2, rep(0, 7)),
+  label = c("Populácia", paste0("y", 1:7))
+)
+
+ggplot() +
+  # Populácia box
+  annotate("rect", xmin = -1, xmax = 1, ymin = 1.5, ymax = 2.5, 
+           fill = "lightblue", color = "black") +
+  annotate("text", x = 0, y = 2, label = "Populácia", fontface = "bold") +
+  # Pozorovania
+  geom_point(data = filter(diagram_data, level == "Pozorovania"),
+             aes(x = x, y = y), size = 15, color = "lightgreen", shape = 21, fill = "lightgreen") +
+  geom_text(data = filter(diagram_data, level == "Pozorovania"),
+            aes(x = x, y = y, label = label), size = 3) +
+  # Šípky
+  annotate("segment", x = 0, xend = seq(-3, 3, length.out = 7), y = 1.5, yend = 0.4,
+           arrow = arrow(length = unit(0.2, "cm")), color = "gray50") +
+  theme_void() +
+  labs(title = "Complete Pooling Framework") +
+  ylim(-0.5, 3)
+```
+
+## Predpoklady Complete Pooling
+
+Complete pooled model robí dva predpoklady:
+
+1. **Nezávislosť**: Každé pozorovanie je nezávislé od ostatných
+2. **Irelevantnosť skupín**: Informácia o individuálnych bežcoch je irelevantná pre model
+
+**Problém:** Oba tieto predpoklady sú **nesprávne**!
+
+- Pozorovania v rámci jedného bežca sú **korelované** (ako rýchlo bežal minule nám povie niečo o tom, ako rýchlo pobehne nabudúce)
+- Ľudia sú **inherentne odlišní** vo vzťahu medzi časom behu a vekom
+
+---
+
+# No Pooling (Bez zlúčenia)
+
+## Koncept
+
+Namiesto zlúčenia všetkých do jedného bazéna, **no pooling** prístup uvažuje každého z $m = 36$ bežcov **osobitne**.
+
+## Matematická formulácia
+
+Nech $(Y_{ij}, X_{ij})$ označuje pozorované časy behu a vek pre bežca $j$ v jeho $i$-tom preteku. Štruktúra dát pre **no pooled model** bežca $j$ je:
+
+$$
+\begin{equation}
+Y_{ij} | \beta_{0j}, \beta_{1j}, \sigma \sim N\left(\mu_{ij}, \sigma^2\right) \quad \text{kde} \quad \mu_{ij} = \beta_{0j} + \beta_{1j} X_{ij}
+\tag{15.2}
+\end{equation}
+$$
+
+**Kľúčový rozdiel:** Každý bežec $j$ má:
+
+- **Unikátny intercept** $\beta_{0j}$ - niektorí ľudia sú rýchlejší ako iní
+- **Unikátny slope** $\beta_{1j}$ - zmeny rýchlosti v čase nie sú pre všetkých rovnaké
+
+## Vizualizácia No Pooled modelov
+
+```{r no-pooled-three, fig.cap="No Pooled modely pre 3 bežcov"}
+ggplot(examples, aes(x = age, y = net)) +
+  geom_point(size = 3, color = "steelblue") +
+  geom_smooth(method = "lm", se = FALSE, color = "blue", linewidth = 1) +
+  facet_wrap(~ runner, labeller = labeller(runner = function(x) paste("Bežec", x))) +
+  xlim(52, 62) +
+  labs(
+    title = "No Pooled modely - individuálne trendy pre každého bežca",
+    x = "Vek (roky)",
+    y = "Čas behu (minúty)"
+  ) +
+  theme_minimal()
+```
+
+**Na prvý pohľad to vyzerá skvele!** Modely špecifické pre bežcov zachytávajú trendy špecifické pre bežcov.
+
+## Diagram No Pooling
+
+```{r diagram-no-pool, echo=FALSE, fig.height=3, fig.cap="Schéma No Pooling prístupu"}
+ggplot() +
+  # Bežec 1
+  annotate("rect", xmin = -4.5, xmax = -2.5, ymin = 1.5, ymax = 2.5, 
+           fill = "lightblue", color = "black") +
+  annotate("text", x = -3.5, y = 2, label = "Bežec 1", fontface = "bold", size = 3) +
+  geom_point(aes(x = c(-4, -3.5, -3), y = c(0, 0, 0)), 
+             size = 12, color = "lightgreen", shape = 21, fill = "lightgreen") +
+  annotate("text", x = c(-4, -3.5, -3), y = c(0, 0, 0), 
+           label = c("y11", "y21", "y31"), size = 2.5) +
+  annotate("segment", x = -3.5, xend = c(-4, -3.5, -3), y = 1.5, yend = 0.4,
+           arrow = arrow(length = unit(0.15, "cm")), color = "gray50") +
+  
+  # Bežec 2
+  annotate("rect", xmin = -1, xmax = 1, ymin = 1.5, ymax = 2.5, 
+           fill = "lightblue", color = "black") +
+  annotate("text", x = 0, y = 2, label = "Bežec 2", fontface = "bold", size = 3) +
+  geom_point(aes(x = c(-0.5, 0, 0.5), y = c(0, 0, 0)), 
+             size = 12, color = "lightgreen", shape = 21, fill = "lightgreen") +
+  annotate("text", x = c(-0.5, 0, 0.5), y = c(0, 0, 0), 
+           label = c("y12", "y22", "y32"), size = 2.5) +
+  annotate("segment", x = 0, xend = c(-0.5, 0, 0.5), y = 1.5, yend = 0.4,
+           arrow = arrow(length = unit(0.15, "cm")), color = "gray50") +
+  
+  # Bežec m
+  annotate("rect", xmin = 2.5, xmax = 4.5, ymin = 1.5, ymax = 2.5, 
+           fill = "lightblue", color = "black") +
+  annotate("text", x = 3.5, y = 2, label = "Bežec m", fontface = "bold", size = 3) +
+  geom_point(aes(x = c(3, 3.5, 4), y = c(0, 0, 0)), 
+             size = 12, color = "lightgreen", shape = 21, fill = "lightgreen") +
+  annotate("text", x = c(3, 3.5, 4), y = c(0, 0, 0), 
+           label = c("y1m", "y2m", "y3m"), size = 2.5) +
+  annotate("segment", x = 3.5, xend = c(3, 3.5, 4), y = 1.5, yend = 0.4,
+           arrow = arrow(length = unit(0.15, "cm")), color = "gray50") +
+  
+  # Bodky medzi skupinami
+  annotate("text", x = 1.75, y = 2, label = "...", size = 6) +
+  
+  theme_void() +
+  labs(title = "No Pooling Framework - Samostatné, neprepojené modely") +
+  ylim(-0.5, 3)
+```
+
+## Nevýhody No Pooling
+
+### Problém 1: Nemôžeme generalizovať
+
+Čo ak by ste vy plánovali behať v Cherry Blossom pretekoch? Aké časy očakávate?
+
+> **No pooling prístup vám nepomôže!** Modely sú prispôsobené 36 jednotlivcom v našej vzorke a **nespoľahlivo sa rozširujú** na iných.
+
+### Problém 2: Ignorujeme hodnotnú informáciu
+
+**Kvíz:** Pozrite sa na bežca 1. Ak by bežal šiesty krát vo veku 62, aký čas by ste očakávali?
+
+- a) Pod 75 minút
+- b) Medzi 75 a 85 minút  
+- c) Nad 85 minút
+
+```{r quiz-visualization, fig.cap="Predpoveď pre bežca 1 - extrapolácia"}
+runner1 <- running %>% filter(runner == "1")
+
+ggplot(runner1, aes(x = age, y = net)) +
+  geom_point(size = 3, color = "steelblue") +
+  geom_smooth(method = "lm", se = FALSE, fullrange = TRUE, color = "blue") +
+  xlim(50, 65) +
+  geom_vline(xintercept = 62, linetype = "dashed", color = "red") +
+  annotate("text", x = 62.5, y = 90, label = "Vek 62?", color = "red") +
+  labs(
+    title = "Bežec 1: Extrapolácia No Pooled modelu",
+    x = "Vek (roky)",
+    y = "Čas behu (minúty)"
+  ) +
+  theme_minimal()
+```
+
+**Analýza:**
+
+- Podľa no pooled modelu: odpoveď by bola **a)** - bežec sa zdá zrýchľovať!
+- **Ale:** Od ostatných 35 bežcov sme pozorovali, že väčšina ľudí sa spomaľuje
+- **Rozumnejšia predpoveď:** **b)** - hoci nemusí pokračovať v strmom klesaní, bežec 1 pravdepodobne zostane rýchly s časom 75-85 minút
+
+---
+
+# Hierarchické dáta
+
+## Štruktúra hierarchických dát
+
+Cherry Blossom dáta predstavujú **hierarchické dáta**:
+
+1. **Vrchná vrstva**: Populácia všetkých bežcov (nielen tých v našej vzorke)
+2. **Stredná vrstva**: 36 bežcov vzorkovaných z tejto populácie
+3. **Spodná vrstva**: Viaceré pozorovania na bežca (**repeated measures** / longitudinálne dáta)
+
+## Príklady hierarchických dát
+
+### Príklad 1: Vzdelávanie
+
+```{r example-school, echo=FALSE}
+tibble(
+  school_id = c(1, 1, 1, 2, 2),
+  tech = c("A", "A", "B", "A", "B"),
+  score = c(90, 94, 82, 85, 89)
+) %>% 
+  knitr::kable(caption = "Hierarchické dáta: Školy a študenti")
+```
+
+- **Skupiny**: Školy
+- **Pozorovania**: Študenti v každej škole
+
+### Príklad 2: Výskum
+
+```{r example-lab, echo=FALSE}
+tibble(
+  lab_id = c(1, 1, 1, 2, 2),
+  repellant = c("A", "A", "B", "A", "B"),
+  score = c(90, 94, 82, 85, 89)
+) %>% 
+  knitr::kable(caption = "Hierarchické dáta: Laboratóriá a experimenty")
+```
+
+- **Skupiny**: Laboratóriá
+- **Pozorovania**: Experimenty v každom laboratóriu
+
+## Prečo zbierať hierarchické dáta?
+
+1. **Efektívnosť zdrojov**: Je jednoduchšie urobiť rozhovor s 20 študentmi v 5 školách ako s 1 študentom v 100 školách
+
+2. **Dva typy variability**:
+
+   - **Within-group variability** (variabilita v rámci skupiny): Ako konzistentné sú časy bežca z roka na rok?
+   
+   - **Between-group variability** (variabilita medzi skupinami): Ako veľmi sa líšia vzorce behu medzi jednotlivcami?
+
+---
+
+# Partial Pooling s hierarchickými modelmi
+
+## Filozofia
+
+Hierarchické modely prijímajú nasledujúcu myšlienku:
+
+> **Hoci je každá skupina unikátna, všetky skupiny boli vzorkované z rovnakej populácie, a preto sú prepojené a môžu obsahovať hodnotnú informáciu jedna o druhej.**
+
+## Porovnanie troch prístupov
+
+| Prístup | Vibe | Problém |
+|---------|------|---------|
+| **Complete Pooling** | "Žiadny priestor pre individualitu" | Zavádzajúce závery |
+| **No Pooling** | "Každý sám za seba" | Nedá sa generalizovať |
+| **Partial Pooling** | "Učme sa navzájom, oslavujme individualitu" | ✓ Najlepšia voľba |
+
+## Diagram Hierarchického modelu
+
+```{r diagram-hierarchical, echo=FALSE, fig.height=4, fig.cap="Schéma Hierarchického (Partial Pooling) modelu"}
+ggplot() +
+  # Populácia
+  annotate("rect", xmin = -1.5, xmax = 1.5, ymin = 3.5, ymax = 4.5, 
+           fill = "lightyellow", color = "black", linewidth = 1.2) +
+  annotate("text", x = 0, y = 4, label = "Populácia", fontface = "bold", size = 4) +
+  
+  # Šípky z populácie ku skupinám
+  annotate("segment", x = 0, xend = c(-3.5, 0, 3.5), y = 3.5, yend = 2.6,
+           arrow = arrow(length = unit(0.2, "cm")), color = "black", linewidth = 0.8) +
+  
+  # Skupina 1
+  annotate("rect", xmin = -4.5, xmax = -2.5, ymin = 1.5, ymax = 2.5, 
+           fill = "lightblue", color = "black") +
+  annotate("text", x = -3.5, y = 2, label = "Skupina 1", fontface = "bold", size = 3) +
+  geom_point(aes(x = c(-4, -3.5, -3), y = c(0, 0, 0)), 
+             size = 12, color = "lightgreen", shape = 21, fill = "lightgreen") +
+  annotate("text", x = c(-4, -3.5, -3), y = c(0, 0, 0), 
+           label = c("y11", "y21", "y31"), size = 2.5) +
+  annotate("segment", x = -3.5, xend = c(-4, -3.5, -3), y = 1.5, yend = 0.4,
+           arrow = arrow(length = unit(0.15, "cm")), color = "gray50") +
+  
+  # Skupina 2
+  annotate("rect", xmin = -1, xmax = 1, ymin = 1.5, ymax = 2.5, 
+           fill = "lightblue", color = "black") +
+  annotate("text", x = 0, y = 2, label = "Skupina 2", fontface = "bold", size = 3) +
+  geom_point(aes(x = c(-0.5, 0, 0.5), y = c(0, 0, 0)), 
+             size = 12, color = "lightgreen", shape = 21, fill = "lightgreen") +
+  annotate("text", x = c(-0.5, 0, 0.5), y = c(0, 0, 0), 
+           label = c("y12", "y22", "y32"), size = 2.5) +
+  annotate("segment", x = 0, xend = c(-0.5, 0, 0.5), y = 1.5, yend = 0.4,
+           arrow = arrow(length = unit(0.15, "cm")), color = "gray50") +
+  
+  # Skupina m
+  annotate("rect", xmin = 2.5, xmax = 4.5, ymin = 1.5, ymax = 2.5, 
+           fill = "lightblue", color = "black") +
+  annotate("text", x = 3.5, y = 2, label = "Skupina m", fontface = "bold", size = 3) +
+  geom_point(aes(x = c(3, 3.5, 4), y = c(0, 0, 0)), 
+             size = 12, color = "lightgreen", shape = 21, fill = "lightgreen") +
+  annotate("text", x = c(3, 3.5, 4), y = c(0, 0, 0), 
+           label = c("y1m", "y2m", "y3m"), size = 2.5) +
+  annotate("segment", x = 3.5, xend = c(3, 3.5, 4), y = 1.5, yend = 0.4,
+           arrow = arrow(length = unit(0.15, "cm")), color = "gray50") +
+  
+  # Bodky medzi skupinami
+  annotate("text", x = 1.75, y = 2, label = "...", size = 6) +
+  
+  theme_void() +
+  labs(title = "Hierarchický Model Framework - Skupiny prepojené cez populáciu") +
+  ylim(-0.5, 5)
+```
+
+## Vizuálne porovnanie modelov
+
+```{r comparison-plot, fig.height=8, fig.cap="Porovnanie Complete Pooled, No Pooled a Hierarchického modelu"}
+# Pomocná funkcia pre aproximáciu hierarchického modelu
+# (skutočný hierarchický model budeme stavať v kapitole 16)
+
+# Najprv spočítame no-pooled odhady pre každého bežca
+no_pooled_estimates <- running %>%
+  group_by(runner) %>%
+  summarise(
+    n_obs = n(),
+    no_pooled_intercept = coef(lm(net ~ age))[1],
+    no_pooled_slope = coef(lm(net ~ age))[2],
+    .groups = "drop"
+  )
+
+# Celkový priemer pre shrinkage
+global_slope <- slope_pooled
+
+# Aproximácia hierarchického modelu pomocou shrinkage
+# (čím menej pozorovaní, tým viac sa priblížime ku globálnemu priemeru)
+no_pooled_estimates <- no_pooled_estimates %>%
+  mutate(
+    shrinkage_factor = n_obs / (n_obs + 2),  # jednoduchá aproximácia
+    hier_slope = shrinkage_factor * no_pooled_slope + (1 - shrinkage_factor) * global_slope,
+    hier_intercept = no_pooled_intercept + (no_pooled_slope - hier_slope) * mean(running$age)
+  )
+
+# Vyberieme 3 bežcov + "vy"
+selected_runners <- c("1", "20", "22")
+plot_data <- no_pooled_estimates %>% filter(runner %in% selected_runners)
+
+# Graf pre 3 bežcov
+plots <- list()
+
+for(r in selected_runners) {
+  runner_data <- running %>% filter(runner == r)
+  runner_est <- plot_data %>% filter(runner == r)
+  
+  p <- ggplot(runner_data, aes(x = age, y = net)) +
+    geom_point(size = 3, color = "steelblue") +
+    # Complete pooled (čierna)
+    geom_abline(intercept = intercept_pooled, slope = slope_pooled, 
+                color = "black", linewidth = 1) +
+    # No pooled (modrá)
+    geom_smooth(method = "lm", se = FALSE, color = "blue", linewidth = 1) +
+    # Hierarchický (prerušovaná)
+    geom_abline(intercept = runner_est$hier_intercept, 
+                slope = runner_est$hier_slope,
+                color = "red", linewidth = 1, linetype = "dashed") +
+    labs(title = paste("Bežec", r), x = "Vek", y = "Čas behu") +
+    xlim(52, 62) +
+    theme_minimal()
+  
+  plots[[r]] <- p
+}
+
+# Graf pre "Vy" - nového bežca
+p_you <- ggplot() +
+  geom_abline(intercept = intercept_pooled, slope = slope_pooled, 
+              color = "black", linewidth = 1) +
+  geom_abline(intercept = intercept_pooled - 5, slope = mean(no_pooled_estimates$hier_slope),
+              color = "red", linewidth = 1, linetype = "dashed") +
+  xlim(52, 62) + ylim(60, 130) +
+  labs(title = "Vy (nový bežec)", x = "Vek", y = "Čas behu") +
+  annotate("text", x = 57, y = 120, label = "Žiadne dáta!", color = "gray50", size = 4) +
+  theme_minimal()
+
+# Kombinujeme grafy
+(plots[["1"]] | plots[["20"]]) / (plots[["22"]] | p_you) +
+  plot_annotation(
+    title = "Porovnanie troch prístupov",
+    subtitle = "Čierna = Complete Pooled | Modrá = No Pooled | Červená prerušovaná = Hierarchický"
+  )
+```
+
+## Kľúčové pozorovania z porovnania
+
+### Pre existujúcich bežcov (1, 20, 22):
+
+1. **Complete pooled** (čierna): Rovnaký model pre všetkých - ignoruje individualitu
+2. **No pooled** (modrá): Individuálny model - ignoruje informáciu od ostatných
+3. **Hierarchický** (prerušovaná): Kompromis - individuálne trendy **ťahané** smerom k celkovému priemeru
+
+### Pre nového bežca ("Vy"):
+
+- **No pooled**: Nemožné predpovedať (žiadne dáta!)
+- **Complete pooled**: Predpoveď založená len na celkovom priemere (takmer plochý slope)
+- **Hierarchický**: Rozumná predpoveď - očakávame spomalenie podobné priemernému spomaleniu v populácii
+
+## Fenomén "Shrinkage"
+
+Hierarchické modely vykazujú **shrinkage** (sťahovanie):
+
+> Individuálne odhady sú "sťahované" smerom k celkovému priemeru. Miera sťahovania závisí od:
+> 
+> - **Počtu pozorovaní** v skupine (menej dát → väčšie sťahovanie)
+> - **Variability** v rámci skupiny (väčšia variabilita → väčšie sťahovanie)
+
+```{r shrinkage-illustration, fig.cap="Ilustrácia Shrinkage efektu"}
+# Vizualizácia shrinkage
+shrinkage_viz <- no_pooled_estimates %>%
+  ggplot(aes(x = no_pooled_slope, y = hier_slope)) +
+  geom_point(aes(size = n_obs), alpha = 0.6, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = global_slope, linetype = "dotted", color = "red") +
+  annotate("text", x = 5, y = global_slope + 0.3, 
+           label = "Globálny priemer", color = "red", size = 3) +
+  labs(
+    title = "Shrinkage: No Pooled vs Hierarchické odhady slope",
+    subtitle = "Body bližšie k červenej čiare = väčšie sťahovanie ku globálnemu priemeru",
+    x = "No Pooled Slope (individuálny odhad)",
+    y = "Hierarchický Slope (po shrinkage)",
+    size = "Počet\npozorovaní"
+  ) +
+  theme_minimal()
+
+shrinkage_viz
+```
+
+---
+
+# Zhrnutie kapitoly
+
+V Kapitole 15 sme motivovali dôležitosť začlenenia novej techniky do nášho Bayesiánskeho nástroja: **hierarchické modely**.
+
+## Tri prístupy k zoskupeným dátam
+
+### 1. Complete Pooled modely
+
+$$Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2), \quad \mu_i = \beta_0 + \beta_1 X_i$$
+
+- **Vibe**: "Žiadny priestor pre individualitu"
+- **Predpoklad**: Všetky pozorovania sú nezávislé, univerzálny model je vhodný pre všetky skupiny
+- **Nevýhody**: 
+  - Porušenie predpokladu nezávislosti
+  - Zavádzajúce závery o vzťahu a jeho významnosti
+
+### 2. No Pooled modely
+
+$$Y_{ij} | \beta_{0j}, \beta_{1j}, \sigma \sim N(\mu_{ij}, \sigma^2), \quad \mu_{ij} = \beta_{0j} + \beta_{1j} X_{ij}$$
+
+- **Vibe**: "Každá skupina sama za seba"
+- **Predpoklad**: Model jednej skupiny nepovie nič o inej
+- **Nevýhody**:
+  - Nemožnosť generalizácie na skupiny mimo vzorky
+  - Nedostatočné využitie dát (ignorujeme hodnotnú informáciu)
+
+### 3. Partial Pooled (Hierarchické) modely
+
+- **Vibe**: "Učme sa od seba navzájom, oslavujme individualitu"
+- **Predpoklad**: Skupiny sú prepojené cez spoločnú populáciu
+- **Výhody**:
+  - Individuálne modely pre každú skupinu
+  - Zdieľanie informácie medzi skupinami
+  - Možnosť predpovedať pre nové skupiny
+
+## Kľúčové koncepty
+
+| Koncept | Definícia |
+|---------|-----------|
+| **Hierarchické dáta** | Dáta so skupinovou štruktúrou (pozorovania vnorené v skupinách) |
+| **Within-group variability** | Variabilita pozorovaní v rámci jednej skupiny |
+| **Between-group variability** | Variabilita medzi skupinami |
+| **Shrinkage** | Sťahovanie individuálnych odhadov smerom k celkovému priemeru |
+| **Partial pooling** | Kompromis medzi úplným a žiadnym zlúčením |
+
+## Čo nás čaká ďalej
+
+- **Kapitola 16**: Budeme skutočne stavať hierarchické modely bez prediktorov
+- **Kapitola 17**: Hierarchické modely s prediktormi
+- **Kapitola 18**: Nie-normálne hierarchické modely
+- **Kapitola 19**: Modely s viacerými vrstvami hierarchie
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

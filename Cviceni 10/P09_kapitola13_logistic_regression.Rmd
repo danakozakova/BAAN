@@ -309,7 +309,8 @@ rain_model_prior <- stan_glm(
   chains = 4, 
   iter = 5000*2, 
   seed = 84735,
-  prior_PD = TRUE  # Len apriorná simulácia
+  prior_PD = TRUE,  # Len apriorná simulácia
+  refresh = 0
 )
 ```
 
@@ -375,7 +376,7 @@ p_jitter + p_rate
 
 ```{r posterior-sim}
 # Posteriorná simulácia
-rain_model_1 <- update(rain_model_prior, prior_PD = FALSE)
+rain_model_1 <- update(rain_model_prior, prior_PD = FALSE, refresh = 0)
 ```
 
 ## MCMC diagnostika
@@ -658,7 +659,8 @@ rain_model_2 <- stan_glm(
   prior = normal(0, 2.5, autoscale = TRUE),
   chains = 4, 
   iter = 5000*2, 
-  seed = 84735
+  seed = 84735,
+  refresh = 0
 )
 
 # Apriorné rozdelenia
@@ -767,7 +769,7 @@ $$\pi_i = \frac{e^{\beta_0 + \beta_1 X_{i1} + \cdots + \beta_p X_{ip}}}{1 + e^{\
 # Logistická regresia v rstanarm
 stan_glm(y ~ x1 + x2, data = data, family = binomial,
          prior_intercept = normal(m0, s0),
-         prior = normal(m, s, autoscale = TRUE))
+         prior = normal(m, s, autoscale = TRUE), refresh = 0)
 
 # Posteriorné intervaly
 posterior_interval(model, prob = 0.80)

@@ -1,0 +1,640 @@
+---
+title: "Kapitola 18: Non-Normal Hierarchical Regression & Classification"
+subtitle: "Bayes Rules! An Introduction to Applied Bayesian Modeling"
+author: "Podla Johnson, Ott, Dogucu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+# Uvod do kapitoly 18
+
+V tejto kapitole sa naučíme kombinovať základné stavebné bloky modelovania a vytvárať nové modely podľa potrieb. Podobne ako šéfkuchár, ktorý ovláda základné prvky varenia (chuť, textúru, vôňu), aj my môžeme kombinovať rôzne prvky modelovania bez striktného dodržiavania kuchárskej knihy.
+
+**Hlavné ciele kapitoly:**
+
+- Rozšíriť náš toolkit hierarchických regresných modelov kombináciou:
+  - Hierarchických modelov (Kapitola 15-17)
+  - Logistickej regresie (Kapitola 13)
+  - Poissonovej a Negatívne binomickej regresie (Kapitola 12)
+
+V tejto kapitole budeme používať slabo informatívne priory. Pre detaily o nastavení priorov v Poissonovej a logistickej regresii pozri Kapitoly 12 a 13.
+
+```{r packages}
+# Nacitanie balikov
+library(bayesrules)
+library(tidyverse)
+library(bayesplot)
+library(rstanarm)
+library(tidybayes)
+library(broom.mixed)
+library(janitor)
+```
+
+---
+
+# Hierarchicka logisticka regresia
+
+## Motivacia: Horolezci v Himalajach
+
+Horolezci sa vydávajú na výstupy v nepálskych Himalájach. Úspech však nie je zaručený - zlé počasie, chybné vybavenie, zranenia alebo smola môžu zabrániť dosiahnutiu vrcholu.
+
+**Výskumné otázky:**
+
+- Aká je pravdepodobnosť, že horolezec dosiahne vrchol?
+- Aké faktory prispievajú k vyššej miere úspechu?
+
+```{r data-climbers}
+# Import dat
+data(climbers_sub)
+
+climbers <- climbers_sub %>%
+  select(expedition_id, member_id, success, year, season,
+         age, expedition_role, oxygen_used)
+
+# Pocet horolezecov
+nrow(climbers)
+
+# Miera uspechu
+climbers %>%
+  tabyl(success)
+```
+
+### Grupovacia struktura dat
+
+Dáta `climbers` majú hierarchickú štruktúru - horolezci sú zoskupení do expedícií. Každá expedícia pozostáva z viacerých horolezcov, ktorí zdieľajú rovnakú destináciu, lídrov a poveternostné podmienky.
+
+```{r expedition-structure}
+# Pocet horolezecov na expediciu
+climbers_per_expedition <- climbers %>%
+  group_by(expedition_id) %>%
+  summarize(count = n())
+
+# Pocet expedici
+nrow(climbers_per_expedition)
+
+# Priklady expedici
+climbers_per_expedition %>%
+  head(3)
+```
+
+```{r expedition-success-rate}
+# Miera uspechu pre kazdu expediciu
+expedition_success <- climbers %>%
+  group_by(expedition_id) %>%
+  summarize(success_rate = mean(success))
+
+# Graf mier uspechu
+ggplot(expedition_success, aes(x = success_rate)) +
+  geom_histogram(color = "white", bins = 20) +
+  labs(
+    title = "Rozdelenie mier uspechu expedici",
+    x = "Miera uspechu",
+    y = "Pocet expedici"
+  ) +
+  theme_minimal()
+```
+
+Viac ako 75 z 200 expedícií malo 0% mieru úspechu, zatiaľ čo takmer 20 expedícií malo 100% mieru úspechu.
+
+---
+
+## Budovanie modelu
+
+### Definicia premennych
+
+Nech $Y_{ij}$ označuje, či horolezec $i$ v expedícii $j$ úspešne dosiahol vrchol:
+
+$$Y_{ij} = \begin{cases} 1 & \text{ano} \\ 0 & \text{nie} \end{cases}$$
+
+Prediktory:
+
+- $X_{ij1}$ = vek horolezca $i$ v expedícii $j$
+- $X_{ij2}$ = či horolezec $i$ v expedícii $j$ použil kyslík
+
+```{r explore-predictors}
+# Miera uspechu podla veku a pouzitia kyslika
+data_by_age_oxygen <- climbers %>%
+  group_by(age, oxygen_used) %>%
+  summarize(success_rate = mean(success), .groups = "drop")
+
+# Vizualizacia
+ggplot(data_by_age_oxygen, aes(x = age, y = success_rate, color = oxygen_used)) +
+  geom_point(alpha = 0.7) +
+  labs(
+    title = "Miera uspechu podla veku a pouzitia kyslika",
+    x = "Vek",
+    y = "Miera uspechu",
+    color = "Pouzitie kyslika"
+  ) +
+  theme_minimal()
+```
+
+### Complete Pooling Model (bez hierarchie)
+
+Základný logistický regresný model:
+
+$$\begin{aligned}
+Y_{ij}|\beta_0,\beta_1,\beta_2 & \stackrel{ind}{\sim} \text{Bern}(\pi_{ij}) \\
+\log\left(\frac{\pi_{ij}}{1 - \pi_{ij}}\right) &= \beta_0 + \beta_1 X_{ij1} + \beta_2 X_{ij2} \\
+\beta_{0c} & \sim N\left(m_0, s_0^2 \right) \\
+\beta_1 & \sim N\left(m_1, s_1^2 \right) \\
+\beta_2 & \sim N\left(m_2, s_2^2 \right)
+\end{aligned}$$
+
+Tento model však **nezohľadňuje grupovaciu štruktúru** dát!
+
+### Hierarchicky model s nahodnymi interceptmi
+
+$$\begin{aligned}
+Y_{ij}|\beta_{0j},\beta_1, \beta_2 & \sim \text{Bern}(\pi_{ij}) & \text{(model v ramci expedicie } j\text{)}\\
+\log\left(\frac{\pi_{ij}}{1 - \pi_{ij}}\right) &= \beta_{0j} + \beta_1 X_{ij1} + \beta_2 X_{ij2} \\
+\beta_{0j} | \beta_0, \sigma_0 & \stackrel{ind}{\sim} N(\beta_0, \sigma_0^2) & \text{(variabilita medzi expediciami)} \\
+\beta_{0c} & \sim N\left(0, 2.5^2 \right) & \text{(globalne priory)}\\
+\beta_1 & \sim N\left(0, 0.24^2 \right) \\
+\beta_2 & \sim N\left(0, 5.51^2 \right) \\
+\sigma_0 & \sim \text{Exp}(1)
+\end{aligned}$$
+
+**Alternativna formulacia s "tweaks":**
+
+$$\log\left(\frac{\pi_{ij}}{1 - \pi_{ij}}\right) = (\beta_0 + b_{0j}) + \beta_1 X_{ij1} + \beta_2 X_{ij2}$$
+
+kde $b_{0j} | \sigma_0 \stackrel{ind}{\sim} N(0, \sigma_0^2)$.
+
+### Interpretacia parametrov
+
+| Parameter | Interpretacia |
+|-----------|--------------|
+| $\beta_{0j}$ | Intercept specifický pre expedíciu $j$ (log-odds úspechu) |
+| $\beta_0$ | Globálny intercept (priemerná log-odds úspechu) |
+| $\sigma_0$ | Variabilita v interceptoch medzi expedíciami |
+| $\beta_1$ | Globálny efekt veku (kontrolovaný na kyslík) |
+| $\beta_2$ | Globálny efekt kyslíka (kontrolovaný na vek) |
+
+---
+
+## Simulacia posterioru
+
+```{r climb-model, cache=TRUE, results='hide'}
+climb_model <- stan_glmer(
+  success ~ age + oxygen_used + (1 | expedition_id),
+  data = climbers, 
+  family = binomial,
+  prior_intercept = normal(0, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735
+)
+```
+
+### MCMC diagnostika
+
+```{r climb-diagnostics, fig.height=8}
+# Trace plots
+mcmc_trace(climb_model, size = 0.1)
+```
+
+```{r climb-density}
+# Density overlay
+mcmc_dens_overlay(climb_model)
+```
+
+```{r climb-neff}
+# Efektivna velkost vzorky a R-hat
+neff_ratio(climb_model)
+rhat(climb_model)
+```
+
+### Posterior predictive check
+
+```{r climb-pp-check}
+# Funkcia pre mieru uspechu
+success_rate <- function(x){mean(x == 1)}
+
+# Posterior predictive check
+pp_check(climb_model, nreps = 100,
+         plotfun = "stat", stat = "success_rate") +
+  xlab("Miera uspechu") +
+  labs(title = "Posterior Predictive Check - Miera uspechu")
+```
+
+Simulované miery úspechu sa pohybujú okolo 37-41%, čo zodpovedá pozorovanej miere 38.9%.
+
+---
+
+## Analyza posterioru
+
+```{r climb-posterior-summary}
+# Sumar globalnych parametrov
+tidy(climb_model, effects = "fixed", conf.int = TRUE, conf.level = 0.80)
+```
+
+### Interpretacia vysledkov
+
+**Vek ($\beta_1$):**
+
+- 80% kredibilný interval je pod 0
+- Pravdepodobnosť úspechu klesá s vekom
+- Na škále odds: $(e^{-0.0594}, e^{-0.0358}) = (0.942, 0.965)$
+- **Interpretacia:** Za každý rok veku navyše klesajú odds úspechu o 3.5% až 5.8%
+
+**Kyslík ($\beta_2$):**
+
+- 80% kredibilný interval je výrazne nad 0
+- Použitie kyslíka dramaticky zvyšuje pravdepodobnosť úspechu
+- Na škále odds: $(e^{5.2}, e^{6.43}) = (182, 617)$
+- **Interpretacia:** Použitie kyslíka zvyšuje odds úspechu 182 až 617-násobne!
+
+### Median posteriorny model
+
+$$\log\left(\frac{\pi}{1 - \pi}\right) = -1.42 - 0.0474 X_1 + 5.79 X_2$$
+
+Na škále pravdepodobnosti:
+
+$$\pi = \frac{e^{-1.42 - 0.0474 X_1 + 5.79 X_2}}{1 + e^{-1.42 - 0.0474 X_1 + 5.79 X_2}}$$
+
+### Vizualizacia posteriornych plauzibilnych modelov
+
+```{r climb-posterior-plausible}
+climbers %>%
+  add_fitted_draws(climb_model, n = 100, re_formula = NA) %>%
+  ggplot(aes(x = age, y = success, color = oxygen_used)) +
+  geom_line(aes(y = .value, group = paste(oxygen_used, .draw)),
+            alpha = 0.1) +
+  labs(
+    title = "100 posteriornych plauzibilnych modelov",
+    y = "Pravdepodobnost uspechu",
+    x = "Vek",
+    color = "Pouzitie kyslika"
+  ) +
+  theme_minimal()
+```
+
+---
+
+## Posteriorna klasifikacia
+
+### Predikcie pre novych horolezecov
+
+```{r new-expedition}
+# Nova expedicia - 4 horolezci
+new_expedition <- data.frame(
+  age = c(20, 20, 60, 60), 
+  oxygen_used = c(FALSE, TRUE, FALSE, TRUE),
+  expedition_id = rep("new", 4)
+)
+
+new_expedition
+```
+
+```{r climb-predictions}
+# Posteriorne predikcie
+set.seed(84735)
+binary_prediction <- posterior_predict(climb_model, newdata = new_expedition)
+
+# Prvych 3 sady predikcii
+head(binary_prediction, 3)
+
+# Pravdepodobnosti uspechu
+colMeans(binary_prediction)
+```
+
+**Interpretacia:**
+
+| Horolezec | Vek | Kyslík | P(úspech) |
+|-----------|-----|--------|-----------|
+| 1 | 20 | Nie | 27.88% |
+| 2 | 20 | Áno | 80.40% |
+| 3 | 60 | Nie | 14.40% |
+| 4 | 60 | Áno | 65.15% |
+
+---
+
+## Evaluacia modelu
+
+### Ferovost
+
+Model používa verejné dáta a analýza nemá negatívny dopad na jednotlivcov alebo spoločnosť.
+
+### Presnost klasifikacie
+
+```{r climb-classification}
+# Klasifikacia s cut-off 0.5
+classification_summary(climb_model, data = climbers, cutoff = 0.5)
+```
+
+S cut-off 0.5 dosahujeme:
+
+- **Celkovú presnosť:** ~91.7%
+- **Senzitivitu:** ~90.5% (schopnosť predpovedať úspech)
+- **Špecificitu:** ~92.5% (schopnosť predpovedať neúspech)
+
+### Zvysenie specificity
+
+Pre zvýšenie špecificity na 95% zvýšime cut-off na 0.65:
+
+```{r climb-classification-65}
+# Klasifikacia s cut-off 0.65
+classification_summary(climb_model, data = climbers, cutoff = 0.65)
+```
+
+---
+
+# Hierarchicka Poissonova a Negativne Binomicka regresia
+
+## Motivacia: AirBnB data
+
+Prečo majú niektoré AirBnB ubytovania viac recenzií (a teda pravdepodobne viac hostí) ako iné?
+
+```{r data-airbnb}
+# Nacitanie dat
+data(airbnb)
+
+# Pocet ubytovani
+nrow(airbnb)
+
+# Pocet stvrti
+airbnb %>%
+  summarize(nlevels(neighborhood))
+```
+
+Dataset obsahuje 1561 ubytovaní v 43 chicagských štvrtiach.
+
+---
+
+## Prieskumna analyza
+
+```{r airbnb-explore, fig.height=4}
+# Rozdelenie recenzi
+p1 <- ggplot(airbnb, aes(x = reviews)) +
+  geom_histogram(color = "white", breaks = seq(0, 200, by = 10)) +
+  labs(title = "Rozdelenie poctu recenzi", x = "Pocet recenzi", y = "Pocet") +
+  theme_minimal()
+
+# Vztah s hodnotenim
+p2 <- ggplot(airbnb, aes(y = reviews, x = rating)) +
+  geom_jitter(alpha = 0.5) +
+  labs(title = "Recenzie vs Hodnotenie", x = "Hodnotenie", y = "Recenzie") +
+  theme_minimal()
+
+# Vztah s typom izby
+p3 <- ggplot(airbnb, aes(y = reviews, x = room_type)) +
+  geom_violin(fill = "lightblue") +
+  labs(title = "Recenzie podla typu izby", x = "Typ izby", y = "Recenzie") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+library(patchwork)
+p1 / (p2 | p3)
+```
+
+### Porovnanie stvrti
+
+```{r airbnb-neighborhoods}
+airbnb %>%
+  filter(neighborhood %in% c("Albany Park", "East Garfield Park", "The Loop")) %>%
+  ggplot(aes(y = reviews, x = rating, color = room_type)) +
+  geom_jitter() +
+  facet_wrap(~ neighborhood) +
+  labs(
+    title = "Recenzie podla stvrte",
+    x = "Hodnotenie", 
+    y = "Recenzie",
+    color = "Typ izby"
+  ) +
+  theme_minimal()
+```
+
+---
+
+## Hierarchicky Poissonov model
+
+### Definicia premennych
+
+Pre ubytovanie $i$ v štvrte $j$:
+
+- $Y_{ij}$ = počet recenzií
+- $X_{ij1}$ = hodnotenie (1-5)
+- $X_{ij2}$ = indikátor pre private room
+- $X_{ij3}$ = indikátor pre shared room
+
+### Model
+
+$$\begin{aligned}
+Y_{ij}|\beta_{0j},\beta_1, \beta_2, \beta_3 & \sim \text{Pois}(\lambda_{ij}) \\
+\log(\lambda_{ij}) &= \beta_{0j} + \beta_1 X_{ij1} + \beta_2 X_{ij2} + \beta_3 X_{ij3} \\
+\beta_{0j} | \beta_0, \sigma_0 & \stackrel{ind}{\sim} N(\beta_0, \sigma_0^2)\\
+\beta_{0c} & \sim N\left(3, 2.5^2 \right)\\
+\beta_{1} & \sim N\left(0, 7.37^2 \right)\\
+\beta_{2} & \sim N\left(0, 5.04^2 \right)\\
+\beta_{3} & \sim N\left(0, 14.19^2 \right)\\
+\sigma_0 & \sim \text{Exp}(1)
+\end{aligned}$$
+
+Poznámka: Prior pre $\beta_{0c}$ je centrovaný okolo $\log(20) \approx 3$, pretože očakávame, že typické ubytovanie má okolo 20 recenzií.
+
+```{r airbnb-poisson, cache=TRUE, results='hide'}
+airbnb_model_1 <- stan_glmer(
+  reviews ~ rating + room_type + (1 | neighborhood),
+  data = airbnb, 
+  family = poisson,
+  prior_intercept = normal(3, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735
+)
+```
+
+### Posterior predictive check - Poisson
+
+```{r airbnb-poisson-pp}
+pp_check(airbnb_model_1, nreps = 50) +
+  labs(title = "PP Check - Poissonov model")
+```
+
+**Problem:** Poissonov model značne podceňuje variabilitu v recenziách!
+
+### Overdisperzia
+
+Poissonov model predpokladá:
+$$E(Y_{ij}) = \text{Var}(Y_{ij}) = \lambda_{ij}$$
+
+Tento predpoklad je v praxi často porušený - dáta vykazujú **overdisperziu** (variancia > priemer).
+
+---
+
+## Hierarchicky Negativne Binomicky model
+
+Pre flexibilnejšie modelovanie overdisperzie používame Negatívne Binomické rozdelenie s dodatočným parametrom $r > 0$:
+
+$$\begin{aligned}
+Y_{ij}|\beta_{0j},\beta_1, \beta_2, \beta_3, r & \sim \text{NegBin}(\mu_{ij}, r) \\
+\log(\mu_{ij}) &= \beta_{0j} + \beta_1 X_{ij1} + \beta_2 X_{ij2} + \beta_3 X_{ij3} \\
+\beta_{0j} | \beta_0, \sigma_0 & \stackrel{ind}{\sim} N(\beta_0, \sigma_0^2) \\
+\beta_{0c} & \sim N\left(3, 2.5^2 \right) \\
+\beta_1 & \sim N\left(0, 7.37^2 \right) \\
+\beta_2 & \sim N\left(0, 5.04^2 \right) \\
+\beta_3 & \sim N\left(0, 14.19^2 \right) \\
+r & \sim \text{Exp}(1) \\
+\sigma_0 & \sim \text{Exp}(1)
+\end{aligned}$$
+
+**Alternativna formulacia:**
+
+$$\log(\mu_{ij}) = (\beta_0 + b_{0j}) + \beta_1 X_{ij1} + \beta_2 X_{ij2} + \beta_3 X_{ij3}$$
+
+kde $b_{0j} | \sigma_0 \stackrel{ind}{\sim} N(0, \sigma_0^2)$.
+
+```{r airbnb-negbin, cache=TRUE, results='hide'}
+airbnb_model_2 <- stan_glmer(
+  reviews ~ rating + room_type + (1 | neighborhood),
+  data = airbnb, 
+  family = neg_binomial_2,
+  prior_intercept = normal(3, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735
+)
+```
+
+### Posterior predictive check - Negative Binomial
+
+```{r airbnb-negbin-pp}
+pp_check(airbnb_model_2, nreps = 50) +
+  labs(title = "PP Check - Negativne Binomicky model")
+```
+
+Negatívne Binomický model oveľa lepšie zachytáva správanie dát!
+
+---
+
+## Analyza posterioru - Negative Binomial
+
+### Globalne parametre
+
+```{r airbnb-posterior-global}
+tidy(airbnb_model_2, effects = "fixed", conf.int = TRUE, conf.level = 0.80)
+```
+
+**Interpretacia:**
+
+**Hodnotenie ($\beta_1$):**
+
+- Pozitívna asociácia s recenziami
+- $(e^{0.154}, e^{0.371}) = (1.17, 1.45)$
+- Za každý bod hodnotenia navyše sa počet recenzií zvyšuje o 17-45%
+
+**Shared room ($\beta_3$):**
+
+- Negatívna asociácia s recenziami
+- $(e^{-0.659}, e^{-0.275}) = (0.52, 0.76)$
+- Zdieľané izby majú 52-76% recenzií v porovnaní s celými bytmi
+
+### Parametre specifické pre štvrte
+
+```{r airbnb-posterior-neighborhoods}
+tidy(airbnb_model_2, effects = "ran_vals",
+     conf.int = TRUE, conf.level = 0.80) %>%
+  select(level, estimate, conf.low, conf.high) %>%
+  filter(level %in% c("Albany_Park", "East_Garfield_Park", "The_Loop"))
+```
+
+- **Albany Park:** Pod priemerom (menej recenzií)
+- **East Garfield Park:** Nad priemerom (viac recenzií)
+- **The Loop:** Blízko priemeru
+
+### Predikcie pre nove ubytovania
+
+```{r airbnb-predictions}
+# Predikcie pre 3 ubytovania s rovnakym hodnotenim a typom
+set.seed(84735)
+predicted_reviews <- posterior_predict(
+  airbnb_model_2,
+  newdata = data.frame(
+    rating = rep(5, 3),
+    room_type = rep("Entire home/apt", 3),
+    neighborhood = c("Albany Park", "East Garfield Park", "The Loop")
+  )
+)
+
+mcmc_areas(predicted_reviews, prob = 0.8) +
+  ggplot2::scale_y_discrete(
+    labels = c("Albany Park", "East Garfield Park", "The Loop")
+  ) +
+  xlim(0, 150) +
+  xlab("Pocet recenzi") +
+  labs(title = "Posteriorne predikcne modely pre pocet recenzi")
+```
+
+---
+
+# Zhrnutie kapitoly
+
+## Vseobecny ramec pre hierarchicke GLM
+
+Pre všetky hierarchické zovšeobecnené lineárne modely platí:
+
+$$g\left(E(Y_{ij}|\ldots)\right) = \beta_{0j} + \beta_{1j} X_{ij1} + \cdots + \beta_{pj} X_{ijp}$$
+
+Alternatívne (s "tweaks"):
+
+$$g\left(E(Y_{ij}|\ldots)\right) = (\beta_0 + b_{0j}) + (\beta_1 + b_{1j}) X_{ij1} + \cdots + (\beta_p + b_{pj}) X_{ijp}$$
+
+## Linkove funkcie podla typu modelu
+
+| Model | Link funkcia $g(\cdot)$ |
+|-------|------------------------|
+| Normal: $Y_{ij} \mid \ldots \sim N(\mu_{ij}, \sigma_y^2)$ | $g(\mu_{ij}) = \mu_{ij}$ (identita) |
+| Poisson: $Y_{ij} \mid \ldots \sim \text{Pois}(\lambda_{ij})$ | $g(\lambda_{ij}) = \log(\lambda_{ij})$ |
+| Negative Binomial: $Y_{ij} \mid \ldots \sim \text{NegBinom}(\mu_{ij}, r)$ | $g(\mu_{ij}) = \log(\mu_{ij})$ |
+| Bernoulli (Logistic): $Y_{ij} \mid \ldots \sim \text{Bern}(\pi_{ij})$ | $g(\pi_{ij}) = \log\left(\frac{\pi_{ij}}{1 - \pi_{ij}}\right)$ |
+
+## Klucove body
+
+1. **Hierarchická logistická regresia** - pre binárne výsledky s grupovacou štruktúrou
+2. **Hierarchická Poissonova regresia** - pre počty, ale pozor na overdisperziu
+3. **Hierarchická Negatívne Binomická regresia** - flexibilnejšia alternatíva pre overdisperzné počty
+4. **Random intercepts** - najjednoduchšia forma hierarchie (skupiny majú rôzne intercepty, ale spoločné smernice)
+5. **Posterior predictive checks** - kľúčové pre overenie vhodnosti modelu
+
+---
+
+# Referencie
+
+- Johnson, A. A., Ott, M. Q., & Dogucu, M. (2022). *Bayes Rules! An Introduction to Applied Bayesian Modeling*. CRC Press.
+- Online textbook: [https://www.bayesrulesbook.com/](https://www.bayesrulesbook.com/)
+- The Himalayan Database: [https://www.himalayandatabase.com/](https://www.himalayandatabase.com/)
+- Legler, J., & Roback, P. (2021). *Broadening Your Statistical Horizons*. [https://bookdown.org/roback/bookdown-BeyondMLR/](https://bookdown.org/roback/bookdown-BeyondMLR/)
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

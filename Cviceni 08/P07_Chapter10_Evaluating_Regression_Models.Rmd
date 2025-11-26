@@ -1,0 +1,620 @@
+---
+title: "Kapitola 10: Evaluating Regression Models"
+subtitle: "Bayes Rules! An Introduction to Applied Bayesian Modeling"
+author: "Podla Johnson, Ott, Dogucu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE,
+  fig.width = 8, 
+  fig.height = 5
+)
+```
+
+# Uvod
+
+Predstavme si, ze nas niekto pozve na veceru a ponukne nam huby, ktore sam nazbieral. Pred jedlom by sme sa mali spytat: **Vie, co robi? Su tieto huby bezpecne?**
+
+Podobne, nikdy by sme nemali aplikovat model bez toho, aby sme najprv zhodnotili jeho kvalitu. Bez ohladu na to, ci hovorime o frequentistickom alebo Bayesovskom modeli, su tri kriticke otazky:
+
+1. **Je model fer?** Ako boli data zozbierane? Kym a za akym ucelom? Ake predsudky mozu byt zabudovane v tejto analyze?
+
+2. **Ako velmi je model nespravny?** George Box slávne povedal: *"All models are wrong, but some are useful."* Su nase predpoklady modelu rozumne?
+
+3. **Ake presne su posteriorné predikcie?** Ako daleko su posteriorné prediktivne modely od reality?
+
+# Priprava prostredia
+
+```{r packages}
+# Nacitanie potrebnych balickov
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(broom.mixed)
+
+# Nastavenie temy pre ggplot
+theme_set(theme_minimal())
+```
+
+```{r data}
+# Nacitanie dat
+data("bikes")
+
+# Prehlad dat
+glimpse(bikes)
+```
+
+# Model z kapitoly 9
+
+Pouzijeme model z kapitoly 9, kde modelujeme pocet jazdcov Capital Bikeshare ($Y_i$) na zaklade teploty ($X_i$):
+
+$$
+\begin{aligned}
+Y_i | \beta_0, \beta_1, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2) \quad \text{kde} \quad \mu_i = \beta_0 + \beta_1 X_i \\
+\beta_{0c} &\sim N(5000, 1000^2) \\
+\beta_1 &\sim N(100, 40^2) \\
+\sigma &\sim \text{Exp}(0.0008)
+\end{aligned}
+$$
+
+```{r model, cache=TRUE, results='hide'}
+# Simulacia posteriorneho modelu
+bike_model <- stan_glm(
+  rides ~ temp_feel,
+  data = bikes,
+  family = gaussian,
+  prior_intercept = normal(5000, 1000),
+  prior = normal(100, 40),
+  prior_aux = exponential(0.0008),
+  chains = 4, iter = 5000*2, seed = 84735
+)
+```
+
+```{r model-df}
+# Ulozenie posteriornych vzoriek do data frame
+bike_model_df <- as.data.frame(bike_model)
+head(bike_model_df)
+```
+
+# Je model fer? (Fairness)
+
+Prva otazka pri hodnoteni Bayesovskeho modelu je eticka: **Je model fer?**
+
+## Klucove otazky pre hodnotenie ferovosti
+
+### Ako boli data zozbierane?
+- Predpokladame, ze data su elektronicky zaznamenavane pre kazdu jazdu
+- Anonymizovane pred tym, nez sa dostanu k nam
+- Zda sa fer
+
+### Kym a za akym ucelom?
+- Spolocnost Capital Bikeshare sleduje vlastne data
+- Ucel: lepsie sluzit zakaznikom a informovat obchodne rozhodnutia
+
+### Ako mozu vysledky ovplyvnit spolocnost?
+- Nezda sa, ze by zber dat alebo analyza mohli negativne ovplyvnit jednotlivcov
+- Zlepsenie sluzieb moze pomoct ziskat menej aut na cestach
+- **Dolezite:** Len preto, ze MY nevidime negativne dopady, neznamena, ze neexistuju!
+
+### Ake predsudky mozu byt zabudovane?
+- Mame data iba od ludi, ktori pouzivaju Capital Bikeshare
+- Analyza moze lepsie informovat, ako sluzit tejto populacii na ukor ostatnych
+
+## Priklady neferovych modelov
+
+> **Amazon (2015):** Model na hodnotenie zivotopisov pre technicke pozicie preferoval muzskych kandidatov, pretoze bol trenovany na datach od sucasnych zamestnancov (vacsinou muzov).
+
+> **Rozpoznavanie tvari:** Systemy pouzivane v policajnom dohlade maju vyssiu chybovost pri identifikacii ludi, ktori su nedostatocne zastupeni v trenovacich datach.
+
+> **ICE (2020):** Model "risk classification assessment" odporucal zadrzanie takmer vo vsetkych pripadoch.
+
+# Ako velmi je model nespravny?
+
+Vsetky modely su nespravne. Statisticke modely su idealisticke reprezentacie komplexnejsich realit. Otazka nie je "je model nespravny?", ale **"ako velmi je nespravny?"**
+
+## Kontrola predpokladov modelu
+
+### Tri predpoklady datoveho modelu
+
+Pre model $Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2)$ kde $\mu_i = \beta_0 + \beta_1 X_i$:
+
+1. **Nezavislost:** Podmienene na $X$, pozorovane data $Y_i$ pre pripad $i$ su nezavisle od dat pre akykolvek iny pripad $j$.
+
+2. **Linearita:** Typicky vysledok $Y$ moze byt napisany ako linearna funkcia $X$: $\mu = \beta_0 + \beta_1 X$.
+
+3. **Normalita s konstantnou varianciou:** Pri akejkolvek hodnote $X$, $Y$ variuje normalne okolo $\mu$ s konstantnou variabilitou $\sigma$.
+
+### Vizualna kontrola predpokladov 2 a 3
+
+```{r assumptions-check}
+ggplot(bikes, aes(y = rides, x = temp_feel)) +
+  geom_point(size = 0.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "steelblue", linewidth = 1.2) +
+  labs(
+    title = "Vztah medzi jazdcami a teplotou",
+    x = "Pocitova teplota (°F)",
+    y = "Pocet jazdcov"
+  )
+```
+
+**Interpretacia:**
+- Vztah medzi jazdcami a teplotou sa zda byt linearny (predpoklad 2 ✓)
+- Variabilita v jazdcoch sa zda byt priblizne konstantna (predpoklad 3 ✓)
+- S miernou vynimkou chladnejsich dni, kde je jazdcov uniformne malo
+
+## Posteriorna prediktivna kontrola (Posterior Predictive Check)
+
+Zakladna myslienka: Ak su kombinovane predpoklady modelu rozumne, nas posteriorny model by mal byt schopny simulovat data podobne originalnym pozorovaniam.
+
+### Matematicky princip
+
+Pre kazdy z 20 000 posteriornych parametrovych sad $(\beta_0, \beta_1, \sigma)$ v nasej Markov chain simulacii, predpovedame 500 dni jazdcov:
+
+$$
+\begin{array}{lll}
+\text{Parametre Markov chain} & & \text{Simulovane vzorky} \\
+\left[ \begin{array}{lll}
+\beta_0^{(1)} & \beta_1^{(1)} & \sigma^{(1)} \\
+\beta_0^{(2)} & \beta_1^{(2)} & \sigma^{(2)} \\
+\vdots & \vdots & \vdots \\
+\beta_0^{(20000)} & \beta_1^{(20000)} & \sigma^{(20000)} \\
+\end{array} \right]
+& \longrightarrow &
+\left[ \begin{array}{llll}
+Y_1^{(1)} & Y_2^{(1)} & \cdots & Y_{500}^{(1)} \\
+Y_1^{(2)} & Y_2^{(2)} & \cdots & Y_{500}^{(2)} \\
+\vdots & \vdots & & \vdots \\
+Y_1^{(20000)} & Y_2^{(20000)} & \cdots & Y_{500}^{(20000)} \\
+\end{array} \right]
+\end{array}
+$$
+
+Pre kazdy parametrovy set $j$ predpovedame jazdcov na den $i$:
+
+$$Y_i^{(j)} | \beta_0, \beta_1, \sigma \sim N\left(\mu^{(j)}, (\sigma^{(j)})^2\right) \quad \text{kde} \quad \mu^{(j)} = \beta_0^{(j)} + \beta_1^{(j)} X_i$$
+
+### Manualny priklad pre prvu parametrovu sadu
+
+```{r manual-ppc}
+# Prva parametrova sada
+first_set <- bike_model_df %>% slice(1)
+first_set
+
+# Extrakcia parametrov
+beta_0 <- first_set$`(Intercept)`
+beta_1 <- first_set$temp_feel
+sigma <- first_set$sigma
+
+# Simulacia jazdcov pre vsetky dni
+set.seed(84735)
+one_simulation <- bikes %>%
+  mutate(
+    mu = beta_0 + beta_1 * temp_feel,
+    simulated_rides = rnorm(500, mean = mu, sd = sigma)
+  ) %>%
+  select(temp_feel, rides, simulated_rides)
+
+# Prvy priklad
+head(one_simulation, 3)
+```
+
+### Porovnanie simulovanych a skutocnych dat
+
+```{r one-simulation-plot}
+ggplot(one_simulation, aes(x = simulated_rides)) +
+  geom_density(color = "lightblue", linewidth = 1.2) +
+  geom_density(aes(x = rides), color = "darkblue", linewidth = 1.2) +
+  labs(
+    title = "Porovnanie: Jedna simulacia vs skutocne data",
+    subtitle = "Svetlo modra = simulacia, Tmavo modra = skutocnost",
+    x = "Pocet jazdcov",
+    y = "Hustota"
+  )
+```
+
+### Oficialna pp_check() funkcia
+
+Funkcia `pp_check()` z balicka **bayesplot** zjednodusuje tento proces:
+
+```{r pp-check}
+pp_check(bike_model, nreps = 50) +
+  labs(
+    title = "Posteriorna prediktivna kontrola",
+    subtitle = "50 simulovanych datasetov (svetlo modra) vs skutocne data (tmavo modra)"
+  )
+```
+
+**Interpretacia:**
+
+✅ **Co chvalit:**
+- 50 sad predikcii dobre zachytava typicku jazdbu a pozorovany rozsah
+
+❌ **Co lutovat:**
+- Vacsina sad nezachytava zjavnu **bimodalitu** v originalnych datach
+- Model by mohol byt lepsi (menej nespravny)
+
+> **Definicia: Posteriorna prediktivna kontrola**
+>
+> Pre regresny model s odezvou $Y$, prediktorom $X$ a parametrami $\theta = (\beta_0, \beta_1, \sigma)$:
+>
+> 1. Pre kazdu sadu posteriornych parametrov $\theta^{(i)}$ simulujeme vzorku hodnot $Y$
+> 2. Porovname vlastnosti simulovanych vzoriek s originalnymi datami $Y$
+
+## Riesenie nespravnych modelov
+
+### Porusenie predpokladu nezavislosti
+
+Bezne scenare:
+- **Zoskupene data:** Viacero pozorovaní na tom istom subjekte (riesenie: hierarchicke modely v Unit 4)
+- **Casove rady:** Teploty v case (riesenie: modely casovych radov)
+- **Priestorove data:** Teploty v roznych lokacach (riesenie: priestorove modely)
+
+### Porusenie predpokladov linearity a konstantnej variancie
+
+```{r nonlinear-example, echo=FALSE}
+# Simulacia nelinearnych dat
+set.seed(84735)
+nonlinear_data <- tibble(
+  x = runif(200, 0, 3),
+  y = exp(0.5 + 0.8 * x + rnorm(200, 0, 0.3))
+)
+
+# Model
+nonlinear_model <- stan_glm(
+  y ~ x, data = nonlinear_data,
+  family = gaussian,
+  chains = 4, iter = 2000, seed = 84735,
+  refresh = 0
+)
+```
+
+```{r nonlinear-plots, fig.width=10, fig.height=4}
+p1 <- ggplot(nonlinear_data, aes(x = x, y = y)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Nelinearny vztah", x = "X", y = "Y")
+
+p2 <- pp_check(nonlinear_model, nreps = 50) +
+  labs(title = "pp_check pre nespravny model")
+
+library(patchwork)
+p1 + p2
+```
+
+### Riesenie: Transformacie
+
+Tri moznosti:
+
+1. **Transformacia $Y$:** $g(Y_i) | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2)$ kde $\mu_i = \beta_0 + \beta_1 X_i$
+
+2. **Transformacia $X$:** $Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2)$ kde $\mu_i = \beta_0 + \beta_1 h(X_i)$
+
+3. **Transformacia oboch:** $g(Y_i) | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2)$ kde $\mu_i = \beta_0 + \beta_1 h(X_i)$
+
+**Priklad: Logaritmicka transformacia $Y$**
+
+$$\log(Y_i) | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N(\mu_i, \sigma^2) \quad \text{kde} \quad \mu_i = \beta_0 + \beta_1 X_i$$
+
+```{r log-transform, fig.width=10, fig.height=4}
+# Model s log transformaciou
+nonlinear_data_log <- nonlinear_data %>%
+  mutate(log_y = log(y))
+
+log_model <- stan_glm(
+  log_y ~ x, data = nonlinear_data_log,
+  family = gaussian,
+  chains = 4, iter = 2000, seed = 84735,
+  refresh = 0
+)
+
+p1 <- ggplot(nonlinear_data_log, aes(x = x, y = log_y)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "steelblue") +
+  labs(title = "Po log transformacii Y", x = "X", y = "log(Y)")
+
+p2 <- pp_check(log_model, nreps = 50) +
+  labs(title = "pp_check po transformacii")
+
+p1 + p2
+```
+
+**Vysvetlenie:** Po log transformacii:
+- Vztah medzi $\log(Y)$ a $X$ je linearny ✓
+- Variabilita je konstantna ✓
+
+# Ako presne su posteriorné predikcie?
+
+V idealnom svete je nas Bayesovsky model fer, nie prilis nespravny, a moze byt pouzity na presne predikovanie novych dat.
+
+## Posteriorné prediktivne sumarizacie
+
+### Priklad: Den 22. oktobra 2012
+
+```{r october-22}
+# Najdenie dna
+bikes %>%
+  filter(date == "2012-10-22") %>%
+  select(date, temp_feel, rides)
+```
+
+V tento 75-stupnovy den bolo 6228 jazdcov. Ako dobre to predpoveda nas model?
+
+```{r predict-75}
+# Simulacia posteriorneho prediktivneho modelu
+set.seed(84735)
+predict_75 <- bike_model_df %>%
+  mutate(
+    mu = `(Intercept)` + temp_feel * 75,
+    y_new = rnorm(20000, mean = mu, sd = sigma)
+  )
+
+# Vizualizacia
+ggplot(predict_75, aes(x = y_new)) +
+  geom_density(fill = "steelblue", alpha = 0.5) +
+  geom_vline(xintercept = 6228, color = "red", linewidth = 1.2, linetype = "dashed") +
+  labs(
+    title = "Posteriorny prediktivny model pre 22. oktober 2012",
+    subtitle = "Cervena ciara = skutocny pocet jazdcov (6228)",
+    x = "Predikovany pocet jazdcov",
+    y = "Hustota"
+  )
+```
+
+### Meranie chyby predikcie
+
+#### Absolutna chyba
+
+$$\text{Chyba} = Y - Y'$$
+
+kde $Y'$ je posteriorna prediktivna priemerna hodnota.
+
+```{r prediction-error}
+# Posteriorny prediktivny priemer
+Y_prime <- mean(predict_75$y_new)
+
+# Absolutna chyba
+error <- 6228 - Y_prime
+
+cat("Posteriorny prediktivny priemer (Y'):", round(Y_prime, 0), "jazdcov\n")
+cat("Absolutna chyba:", round(error, 0), "jazdcov\n")
+cat("Interpretacia: Model podhodnotil jazdcov o", round(error, 0))
+```
+
+#### Skalovatana chyba
+
+$$\text{Skalovatana chyba} = \frac{Y - Y'}{\text{sd}}$$
+
+```{r scaled-error}
+predict_75 %>%
+  summarize(
+    mean = mean(y_new),
+    sd = sd(y_new),
+    error = 6228 - mean(y_new),
+    error_scaled = error / sd(y_new)
+  )
+```
+
+**Interpretacia:** Pozorovanych 6228 jazdcov bolo 1.77 smerodajnych odchylok nad priemernou predikciou. Absolutne hodnoty nad 2 alebo 3 naznacuju, ze pozorovanie je daleko od posteriorneho priemeru.
+
+#### Prediktivne intervaly
+
+```{r prediction-intervals}
+predict_75 %>%
+  summarize(
+    lower_95 = quantile(y_new, 0.025),
+    lower_50 = quantile(y_new, 0.25),
+    upper_50 = quantile(y_new, 0.75),
+    upper_95 = quantile(y_new, 0.975)
+  )
+```
+
+**Interpretacia:** 6228 jazdcov je mimo 50% interval, ale vnutri 95% intervalu - aj ked sme si nemysleli, ze je to velmi pravdepodobny vysledok, stale bol v ramci moznosti.
+
+### Vizualizacia pre vsetky 500 dni
+
+```{r predictions-all}
+# Generovanie predikcii pre vsetky dni
+set.seed(84735)
+predictions <- posterior_predict(bike_model, newdata = bikes)
+dim(predictions)  # 20000 predikcii x 500 dni
+```
+
+```{r ppc-intervals, fig.height=6}
+# Vizualizacia posteriornych prediktivnych intervalov
+ppc_intervals(
+  bikes$rides,
+  yrep = predictions,
+  x = bikes$temp_feel,
+  prob = 0.5,
+  prob_outer = 0.95
+) +
+  labs(
+    title = "Posteriorné prediktivne intervaly pre vsetky dni",
+    subtitle = "Tmavo modre body = skutocnost, Svetlo modre ciary = 50% a 95% intervaly",
+    x = "Pocitova teplota (°F)",
+    y = "Pocet jazdcov"
+  )
+```
+
+### Numericke sumarizacie
+
+> **Definicia: Posteriorné prediktivne sumarizacie**
+>
+> Nech $Y_1, Y_2, \ldots, Y_n$ su $n$ pozorovanych vysledkov. Kazde $Y_i$ ma zodpovedajuci posteriorny prediktivny model s priemerom $Y_i'$ a smerodajnou odchylkou $\text{sd}_i$.
+>
+> - **MAE (Median Absolute Error):** $\text{MAE} = \text{median}|Y_i - Y_i'|$
+> - **MAE scaled:** $\text{MAE scaled} = \text{median}\frac{|Y_i - Y_i'|}{\text{sd}_i}$
+> - **within_50:** Podiel hodnot $Y_i$, ktore su v ich 50% posteriornom prediktivnom intervale
+> - **within_95:** Podiel hodnot $Y_i$, ktore su v ich 95% posteriornom prediktivnom intervale
+
+```{r prediction-summary}
+# Posteriorné prediktivne sumarizacie
+set.seed(84735)
+prediction_summary(bike_model, data = bikes)
+```
+
+**Interpretacia:**
+
+- **mae = 989.7:** Typicka chyba predikcie je ~990 jazdcov
+- **mae_scaled = 0.77:** Typicka chyba je 0.77 smerodajnych odchylok
+- **within_50 = 43.8%:** ~44% pozorovani je v 50% intervale (ocakavame ~50%)
+- **within_95 = 96.8%:** ~97% pozorovani je v 95% intervale (ocakavame ~95%)
+
+## Krizova validacia (Cross-Validation)
+
+Posteriorné prediktivné sumarizacie z predchadzajucej sekcie mozu byt **prilis optimisticke** - model je optimalizovany pre data, na ktorych bol trenovany.
+
+**Analogia:** Predstavme si, ze chceme otvorit tacos stánok. Vytvorime recepty podla chuti nasej priatielky Reem, ktora preferuje ancovicky v kazdom jedle. Otestujeme "anchov-lady" na nej a je to hit. Znamena to, ze bude uspesne aj u verejnosti? **Pravdepodobne nie!**
+
+### Princip krizovej validacie
+
+1. **Trenovanie modelu:** Nahodne vyberieme 90% (450) dat pre stavbu modelu
+2. **Testovanie modelu:** Zvysnych 10% (50) dat pouzijeme na hodnotenie predikcii
+
+### K-fold krizova validacia
+
+> **Algoritmus k-fold krizovej validacie**
+>
+> 1. **Vytvorenie foldov:** Rozdelime data do $k$ neprekryvajucich sa podmnozin rovnakej velkosti
+> 2. **Trenovanie a testovanie:**
+>    - Trénujeme model na prvych $k-1$ foldoch
+>    - Testujeme na $k$-tom folde
+>    - Merame kvalitu predikcie
+> 3. **Opakovanie:** Opakujeme krok 2 $k-1$ krat, vzdy vynechame iny fold
+> 4. **Vypocet:** Spriemernujeme $k$ merani kvality
+
+```{r cross-validation, cache=TRUE}
+# 10-fold krizova validacia
+set.seed(84735)
+cv_procedure <- prediction_summary_cv(
+  model = bike_model,
+  data = bikes,
+  k = 10
+)
+
+# Vysledky pre jednotlive foldy
+cv_procedure$folds
+```
+
+```{r cv-summary}
+# Celkove krizove-validovane sumarizacie
+cv_procedure$cv
+```
+
+### Porovnanie s originalnou sumarizaciou
+
+```{r compare-cv}
+# Originalna sumarizacia (trenovanie = testovanie)
+original <- prediction_summary(bike_model, data = bikes)
+
+# Porovnanie
+comparison <- tibble(
+  Metrika = c("mae", "mae_scaled", "within_50", "within_95"),
+  Original = c(original$mae, original$mae_scaled, original$within_50, original$within_95),
+  `Cross-validated` = c(cv_procedure$cv$mae, cv_procedure$cv$mae_scaled, 
+                        cv_procedure$cv$within_50, cv_procedure$cv$within_95)
+)
+
+comparison
+```
+
+**Interpretacia:** Krizova validacia poskytuje konzervativnejsi (realistickejsi) odhad:
+
+- **mae:** 1029 > 990 - skutocna chyba je vacia nez si model "mysli"
+- Model trenovany na datach dava prilis ruzovy obrazok, ked ho hodnotime na tych istych datach
+
+## Ocakavana log-prediktivna hustota (ELPD)
+
+### Teoreticke pozadie
+
+Zaujima nas kompatibilita $Y_{\text{new}}$ s jeho posteriornym prediktivnym modelom:
+
+$$f(y' | \vec{y}) = \int\int\int f(y' | \beta_0, \beta_1, \sigma) f(\beta_0, \beta_1, \sigma | y) \, d\beta_0 \, d\beta_1 \, d\sigma$$
+
+> **Definicia: Ocakavana log-prediktivna hustota (ELPD)**
+>
+> ELPD meria priemernu log posteriornu prediktivnu pdf $\log(f(y_{\text{new}} | \vec{y}))$ cez vsetky mozne nove datove body. **Cim vyssie ELPD, tym lepsie.**
+
+### Vypocet ELPD
+
+```{r elpd}
+# Leave-one-out odhad ELPD
+model_elpd <- loo(bike_model)
+model_elpd$estimates
+```
+
+**Interpretacia:**
+
+- **elpd_loo = -4289:** ELPD pre nas model
+- Samotna hodnota je tazko interpretovatelna
+- Uzitocne hlavne pre **porovnanie viacerych modelov** (vid kapitola 11)
+- Vyssie ELPD = lepsie predikcie
+
+## Zlepsenie posteriornej prediktivnej presnosti
+
+Ako zlepsit prediktivnu presnost modelu:
+
+1. **Zbieranie viac dat:** Viac dat moze zlepsit pochopenie vztahu medzi $Y$ a $X$
+
+2. **Pouzitie inych/viacerych prediktorov:**
+   - Vlhkost moze byt lepsia ako teplota pre predikciu jazdcov
+   - Mozeme pouzit viacero prediktorov (vid kapitola 11)
+   - **Pozor:** Pridavanie prediktorov ma svoje limity
+
+# MCMC simulacia vs kvalita modelu
+
+Toto su **dve rozne otazky**:
+
+| Otazka | Co skumame | Nastroje |
+|--------|------------|----------|
+| **Ako dobra je MCMC simulacia?** | Ci nasa MCMC simulacia dobre aproximuje model | R-hat, ESS, trace plots |
+| **Ako dobry je model?** | Ci su predpoklady rozumne, ci je fer, ci dava dobre predikcie | pp_check, CV, ELPD |
+
+**Mozne scenare:**
+
+- ✓ Dobra MCMC + ✓ Dobry model = Idealne
+- ✓ Dobra MCMC + ✗ Zly model = Presne aproximujeme zly model
+- ✗ Zla MCMC + ✓ Dobry model = Nepresne aproximujeme dobry model
+- ✗ Zla MCMC + ✗ Zly model = Dvojity problem
+
+# Zhrnutie kapitoly
+
+V kapitole 10 sme sa naucili hodnotit Bayesovsky regresny model:
+
+## Ferovost modelu
+
+- Kontextovo zavisla otazka
+- Vyzaduje pozornost k potencialnym dopadom analyzy
+
+## Ako velmi je model nespravny
+
+- **Nastroj:** `pp_check()` - posteriorna prediktivna kontrola
+- Ak simulovane hodnoty $Y$ su podobne originalnym datam, predpoklady su rozumne
+
+## Presnost posteriornych predikcii
+
+- **Posteriorné prediktivne sumarizacie:**
+  - MAE: typicka vzdialenost medzi $Y$ a $Y'$
+  - within_50, within_95: frekvencia, s akou $Y$ padaju do intervalov
+  
+- **Krizova validacia:** Konzervativnejsi odhad generalizacie modelu
+
+- **ELPD:** Metrika pre porovnanie modelov
+
+```{r session-info}
+sessionInfo()
+```

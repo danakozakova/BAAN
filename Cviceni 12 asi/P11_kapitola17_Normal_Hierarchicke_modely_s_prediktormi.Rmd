@@ -1,0 +1,867 @@
+---
+title: "Kapitola 17: (Normal) Hierarchické modely s prediktormi"
+subtitle: "Bayes Rules! - Študijný materiál"
+author: "Bayesiánska analýza"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = "center"
+)
+```
+
+# Úvod a motivácia
+
+V kapitole 15 sme sa presvedčili, že potrebujeme hierarchické modely. V kapitole 16 sme vybudovali náš prvý hierarchický model – normálny hierarchický model premennej $Y$ bez prediktorov $X$. Tu urobíme ďalší prirodzený krok: vybudujeme **normálny hierarchický regresný model** premennej $Y$ s prediktormi $X$.
+
+## Cieľ analýzy
+
+Vrátime sa k analýze 10-míľového behu Cherry Blossom. Naším cieľom je lepšie porozumieť variabilite v časoch behu:
+
+- Do akej miery bežia niektorí ľudia rýchlejšie ako iní?
+- Ako sú časy behu spojené s vekom?
+- Do akej miery sa toto líši od osoby k osobe?
+
+## Načítanie balíkov a dát
+
+```{r packages}
+# Načítanie balíkov
+library(bayesrules)
+library(tidyverse)
+library(rstanarm)
+library(bayesplot)
+library(tidybayes)
+library(broom.mixed)
+
+# Načítanie dát
+data(cherry_blossom_sample)
+running <- cherry_blossom_sample
+```
+
+```{r data-prep}
+# Odstránenie neúplných pozorovaní
+running <- running %>%
+  select(runner, age, net) %>%
+  na.omit()
+
+# Prehľad dát
+head(running, 10)
+```
+
+## Štruktúra dát
+
+S viacerými pozorovaniami na bežca sú tieto dáta **hierarchické** alebo **zoskupené**. 
+
+**Notácia:**
+
+- $Y_{ij}$ = čas behu pre bežca $j$ v jeho $i$-tom závode
+- $X_{ij}$ = vek bežca $j$ v jeho $i$-tom závode
+
+```{r data-structure}
+# Koľko máme bežcov a koľko pozorovaní?
+running %>%
+  group_by(runner) %>%
+  summarize(
+    pocet_zavodov = n(),
+    priemerny_vek = mean(age),
+    priemerny_cas = mean(net)
+  ) %>%
+  head(10)
+```
+
+# Complete pooling - východiskový bod
+
+## Model complete pooling
+
+Najprv ignorujeme skupinovú štruktúru dát. Toto nie je správny prístup, ale poskytuje dobrý porovnávací bod.
+
+**Model complete pooling:**
+
+$$
+\begin{align}
+Y_{ij} | \beta_0, \beta_1, \sigma & \sim N(\mu_i, \sigma^2) \text{ kde } \mu_i = \beta_0 + \beta_1 X_{ij} \\
+\beta_{0c} & \sim N(0, 35^2) \\
+\beta_1 & \sim N(0, 15^2) \\
+\sigma & \sim \text{Exp}(0.072)
+\end{align}
+$$
+
+Tento model závisí od **troch globálnych parametrov**:
+
+- $\beta_0$ = intercept
+- $\beta_1$ = koeficient veku
+- $\sigma$ = variabilita okolo regresného modelu
+
+```{r complete-pooled}
+# Simulácia complete pooled modelu
+complete_pooled_model <- stan_glm(
+  net ~ age,
+  data = running, family = gaussian,
+  prior_intercept = normal(0, 35, autoscale = TRUE),
+  prior = normal(0, 15, autoscale = TRUE),
+  prior_aux = exponential(0.072, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735
+)
+
+# Posterior súhrn
+model_summary <- tidy(complete_pooled_model, 
+                      conf.int = TRUE, conf.level = 0.80)
+model_summary
+```
+
+## Vizualizácia complete pooled modelu
+
+```{r complete-pooled-viz}
+# Posterior medián modelu
+B0 <- model_summary$estimate[1]
+B1 <- model_summary$estimate[2]
+
+ggplot(running, aes(x = age, y = net)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(intercept = B0, slope = B1, color = "blue", size = 1.2) +
+  labs(
+    title = "Complete pooled model: Čas behu vs. Vek",
+    subtitle = paste0("Posterior medián model: ", round(B0, 1), " + ", 
+                      round(B1, 3), " × vek"),
+    x = "Vek (roky)",
+    y = "Čistý čas (minúty)"
+  ) +
+  theme_minimal()
+```
+
+## Problém complete pooling
+
+80% kredibilný interval pre $\beta_1$ obsahuje 0, čo naznačuje, že neexistuje významný vzťah medzi časom behu a vekom. **Naša intuícia hovorí, že toto je nesprávne** – s pribúdajúcim vekom ľudia spomaľujú.
+
+# Hierarchický model s náhodnými interceptmi
+
+## Budovanie modelu
+
+### Vrstva 1: Variabilita v rámci bežca
+
+Namiesto globálneho priemeru $\mu_j$ nahradíme špecifické priemery pre bežca $\mu_{ij}$, ktoré závisia od veku:
+
+$$
+\mu_{ij} = \beta_{0j} + \beta_1 X_{ij}
+$$
+
+**Prvá vrstva hierarchického modelu:**
+
+$$
+Y_{ij} | \beta_{0j}, \beta_1, \sigma_y \sim N(\mu_{ij}, \sigma_y^2) \text{ kde } \mu_{ij} = \beta_{0j} + \beta_1 X_{ij}
+$$
+
+**Parametre:**
+
+- $\beta_{0j}$ = intercept regresného modelu pre bežca $j$ (group-specific)
+- $\beta_1$ = globálny koeficient veku (global)
+- $\sigma_y$ = variabilita v rámci skupiny (global)
+
+### Vrstva 2: Variabilita medzi bežcami
+
+Intercepty špecifické pre bežca sa menia normálne okolo globálneho interceptu:
+
+$$
+\beta_{0j} | \beta_0, \sigma_0 \stackrel{ind}{\sim} N(\beta_0, \sigma_0^2)
+$$
+
+**Nové parametre:**
+
+- $\beta_0$ = priemerný intercept naprieč všetkými bežcami
+- $\sigma_0$ = variabilita interceptov medzi bežcami
+
+### Vrstva 3: Globálne priory
+
+**Kompletný hierarchický random intercepts model:**
+
+$$
+\begin{align}
+Y_{ij} | \beta_{0j}, \beta_1, \sigma_y & \sim N(\mu_{ij}, \sigma_y^2) \text{ kde } \mu_{ij} = \beta_{0j} + \beta_1 X_{ij} \\
+\beta_{0j} | \beta_0, \sigma_0 & \stackrel{ind}{\sim} N(\beta_0, \sigma_0^2) \\
+\beta_{0c} & \sim N(m_0, s_0^2) \\
+\beta_1 & \sim N(m_1, s_1^2) \\
+\sigma_y & \sim \text{Exp}(l_y) \\
+\sigma_0 & \sim \text{Exp}(l_0)
+\end{align}
+$$
+
+## Alternatívna formulácia
+
+Môžeme prepísať intercepty špecifické pre bežca ako náhodné úpravy $b_{0j}$ ku globálnemu interceptu $\beta_0$:
+
+$$
+\beta_{0j} = \beta_0 + b_{0j} \quad \text{kde} \quad b_{0j} \sim N(0, \sigma_0^2)
+$$
+
+Potom:
+$$
+\mu_{ij} = (\beta_0 + b_{0j}) + \beta_1 X_{ij}
+$$
+
+## Vizualizácia dát po bežcoch
+
+```{r runner-data-viz}
+ggplot(running, aes(x = age, y = net)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5) +
+  facet_wrap(~ runner, ncol = 6) +
+  labs(
+    title = "Časy behu vs. Vek pre každého bežca",
+    x = "Vek (roky)",
+    y = "Čistý čas (minúty)"
+  ) +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 6))
+```
+
+## Naladenie priorov
+
+Na základe nášho predchádzajúceho pochopenia:
+
+- Typický bežec v tejto vekovej skupine beží niekde medzi 80 a 120 minútami
+- Čas behu pravdepodobne rastie s vekom, rýchlosťou medzi 0.5 a 4.5 minúty za rok
+
+**Naladený model:**
+
+$$
+\begin{align}
+Y_{ij} | \beta_{0j}, \beta_1, \sigma_y & \sim N(\mu_{ij}, \sigma_y^2) \text{ kde } \mu_{ij} = \beta_{0j} + \beta_1 X_{ij} \\
+\beta_{0j} | \beta_0, \sigma_0 & \stackrel{ind}{\sim} N(\beta_0, \sigma_0^2) \\
+\beta_{0c} & \sim N(100, 10^2) \\
+\beta_1 & \sim N(2.5, 1^2) \\
+\sigma_y & \sim \text{Exp}(0.072) \\
+\sigma_0 & \sim \text{Exp}(1)
+\end{align}
+$$
+
+## Prior simulácia
+
+```{r prior-simulation}
+# Prior simulácia
+running_model_1_prior <- stan_glmer(
+  net ~ age + (1 | runner),
+  data = running, family = gaussian,
+  prior_intercept = normal(100, 10),
+  prior = normal(2.5, 1),
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 5000*2, seed = 84735,
+  prior_PD = TRUE
+)
+```
+
+```{r prior-viz, fig.height=4}
+# Vizualizácia prior prediktívneho rozdelenia
+set.seed(84735)
+running %>%
+  add_predicted_draws(running_model_1_prior, n = 100) %>%
+  ggplot(aes(x = net)) +
+  geom_density(aes(x = .prediction, group = .draw), alpha = 0.2) +
+  xlim(-100, 300) +
+  labs(
+    title = "Prior prediktívne rozdelenie",
+    x = "Čistý čas (minúty)",
+    y = "Hustota"
+  ) +
+  theme_minimal()
+```
+
+## Posterior simulácia
+
+```{r posterior-simulation}
+# Posterior simulácia
+running_model_1 <- update(running_model_1_prior, prior_PD = FALSE)
+
+# Kontrola priorov
+prior_summary(running_model_1)
+```
+
+## MCMC diagnostika
+
+```{r mcmc-diagnostics, fig.height=8}
+# Trace plots pre globálne parametre
+mcmc_trace(running_model_1, pars = c("(Intercept)", "age", "sigma")) +
+  labs(title = "Trace plots pre globálne parametre")
+
+# Hustotné grafy
+mcmc_dens_overlay(running_model_1, pars = c("(Intercept)", "age", "sigma")) +
+  labs(title = "Posterior hustoty")
+```
+
+```{r diagnostics-check}
+# R-hat a efektívna veľkosť vzorky
+neff <- neff_ratio(running_model_1)
+rhat_vals <- rhat(running_model_1)
+
+cat("Minimálny neff ratio:", min(neff), "\n")
+cat("Maximálny R-hat:", max(rhat_vals), "\n")
+```
+
+## Posterior analýza globálneho vzťahu
+
+```{r global-analysis}
+# Posterior súhrn pre fixné efekty
+tidy_summary_1 <- tidy(running_model_1, effects = "fixed",
+                       conf.int = TRUE, conf.level = 0.80)
+tidy_summary_1
+```
+
+**Interpretácia:** 80% kredibilný interval pre koeficient veku je celý nad 0, čo poskytuje významný dôkaz, že typický bežec spomaľuje s vekom.
+
+```{r global-viz}
+B0 <- tidy_summary_1$estimate[1]
+B1 <- tidy_summary_1$estimate[2]
+
+running %>%
+  add_fitted_draws(running_model_1, n = 200, re_formula = NA) %>%
+  ggplot(aes(x = age, y = net)) +
+  geom_line(aes(y = .value, group = .draw), alpha = 0.1) +
+  geom_abline(intercept = B0, slope = B1, color = "blue", size = 1) +
+  labs(
+    title = "200 posterior plauzibilných globálnych modelových línií",
+    subtitle = paste0("Posterior medián: ", round(B0, 1), " + ", 
+                      round(B1, 2), " × vek"),
+    x = "Vek (roky)",
+    y = "Čistý čas (minúty)"
+  ) +
+  theme_minimal()
+```
+
+## Posterior analýza group-specific vzťahov
+
+```{r group-specific}
+# Posterior súhrny pre intercepty špecifické pre bežca
+runner_summaries_1 <- running_model_1 %>%
+  spread_draws(`(Intercept)`, b[,runner]) %>%
+  mutate(runner_intercept = `(Intercept)` + b) %>%
+  select(-`(Intercept)`, -b) %>%
+  median_qi(.width = 0.80) %>%
+  select(runner, runner_intercept, .lower, .upper)
+
+head(runner_summaries_1, 10)
+```
+
+```{r runners-comparison}
+# Porovnanie bežcov 4 a 5
+runner_summaries_1 %>%
+  filter(runner %in% c("runner:4", "runner:5"))
+```
+
+```{r group-specific-viz}
+# Vizualizácia modelov špecifických pre bežca
+ggplot(running, aes(y = net, x = age, group = runner)) +
+  geom_abline(data = runner_summaries_1, color = "gray",
+              aes(intercept = runner_intercept, slope = B1)) +
+  geom_abline(intercept = B0, slope = B1, color = "blue", size = 1.2) +
+  labs(
+    title = "Posterior medián modely pre 36 bežcov",
+    subtitle = "Šedé = individuálne modely, Modrá = globálny model",
+    x = "Vek (roky)",
+    y = "Čistý čas (minúty)"
+  ) +
+  coord_cartesian(xlim = c(50, 61), ylim = c(50, 135)) +
+  theme_minimal()
+```
+
+## Analýza variability
+
+```{r variance-analysis}
+# Posterior súhrny pre variance parametre
+tidy_sigma <- tidy(running_model_1, effects = "ran_pars")
+tidy_sigma
+```
+
+**Interpretácia:**
+
+- $\sigma_y \approx 5.25$ minút: variabilita v rámci bežca
+- $\sigma_0 \approx 13.3$ minút: variabilita medzi bežcami
+
+**Rozklad celkovej variability:**
+
+$$
+\text{Var}(Y_{ij}) = \sigma_0^2 + \sigma_y^2
+$$
+
+```{r variance-decomposition}
+sigma_y <- tidy_sigma$estimate[tidy_sigma$term == "sd_Observation.Residual"]
+sigma_0 <- tidy_sigma$estimate[tidy_sigma$term == "sd_(Intercept).runner"]
+
+# Proporcia variability medzi bežcami
+prop_between <- sigma_0^2 / (sigma_0^2 + sigma_y^2) * 100
+prop_within <- sigma_y^2 / (sigma_0^2 + sigma_y^2) * 100
+
+cat("Variabilita medzi bežcami:", round(prop_between, 1), "%\n")
+cat("Variabilita v rámci bežcov:", round(prop_within, 1), "%\n")
+```
+
+# Hierarchický model s náhodnými interceptmi a sklonmi
+
+## Motivácia
+
+Pozrime sa na dáta pre niekoľkých bežcov:
+
+```{r diff-slopes-viz}
+running %>%
+  filter(runner %in% c("4", "5", "20", "29")) %>%
+  ggplot(aes(x = age, y = net)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ runner) +
+  labs(
+    title = "Rôzne sklony pre rôznych bežcov",
+    x = "Vek (roky)",
+    y = "Čistý čas (minúty)"
+  ) +
+  theme_minimal()
+```
+
+Niektorí bežci spomaľujú rýchlejšie (bežec 20), iní takmer vôbec (bežec 29).
+
+## Budovanie modelu
+
+### Vrstva 1: Variabilita v rámci bežca
+
+Nahradíme globálny koeficient veku $\beta_1$ koeficientom špecifickým pre bežca $\beta_{1j}$:
+
+$$
+Y_{ij} | \beta_{0j}, \beta_{1j}, \sigma_y \sim N(\mu_{ij}, \sigma_y^2) \text{ kde } \mu_{ij} = \beta_{0j} + \beta_{1j} X_{ij}
+$$
+
+### Vrstva 2: Variabilita medzi bežcami
+
+Intercepty a sklony majú spoločné normálne rozdelenie:
+
+$$
+\left(\begin{array}{c} \beta_{0j} \\ \beta_{1j} \end{array}\right) | \beta_0, \beta_1, \sigma_0, \sigma_1 \sim N\left( \left(\begin{array}{c} \beta_0 \\ \beta_1 \end{array}\right), \Sigma \right)
+$$
+
+kde kovariančná matica je:
+
+$$
+\Sigma = \left(\begin{array}{cc} \sigma_0^2 & \rho \sigma_0 \sigma_1 \\ \rho \sigma_0 \sigma_1 & \sigma_1^2 \end{array}\right)
+$$
+
+**Korelácia $\rho$ medzi interceptmi a sklonmi:**
+
+- $\rho < 0$: Bežci s pomalšou základnou rýchlosťou spomaľujú rýchlejšie
+- $\rho = 0$: Žiadny vzťah medzi základnou rýchlosťou a mierou spomaľovania
+- $\rho > 0$: Bežci s rýchlejšou základnou rýchlosťou spomaľujú rýchlejšie
+
+### Kompletný model
+
+$$
+\begin{align}
+Y_{ij} | \beta_{0j}, \beta_{1j}, \sigma_y & \sim N(\mu_{ij}, \sigma_y^2) \text{ kde } \mu_{ij} = \beta_{0j} + \beta_{1j} X_{ij} \\
+\left(\begin{array}{c} \beta_{0j} \\ \beta_{1j} \end{array}\right) | \beta_0, \beta_1, \sigma_0, \sigma_1 & \sim N\left( \left(\begin{array}{c} \beta_0 \\ \beta_1 \end{array}\right), \Sigma \right) \\
+\beta_{0c} & \sim N(100, 10^2) \\
+\beta_1 & \sim N(2.5, 1^2) \\
+\sigma_y & \sim \text{Exp}(0.072) \\
+\Sigma & \sim \text{decov prior}
+\end{align}
+$$
+
+## Posterior simulácia
+
+```{r model-2-simulation}
+running_model_2 <- stan_glmer(
+  net ~ age + (age | runner),
+  data = running, family = gaussian,
+  prior_intercept = normal(100, 10),
+  prior = normal(2.5, 1),
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 5000*2, seed = 84735, 
+  adapt_delta = 0.99999  # Pre lepšiu konvergenciu
+)
+```
+
+**Poznámka k `adapt_delta`:** Toto je ladiaci parameter pre MCMC algoritmus. Zvýšenie na hodnotu blízku 1 produkuje pomalšiu, ale stabilnejšiu simuláciu.
+
+## Posterior analýza
+
+### Globálne parametre
+
+```{r model-2-global}
+# Globálne parametre
+tidy(running_model_2, effects = "fixed", conf.int = TRUE, conf.level = 0.80)
+```
+
+### Parametre špecifické pre bežca
+
+```{r model-2-runner-specific}
+# MCMC reťazce pre intercepty a sklony špecifické pre bežca
+runner_chains_2 <- running_model_2 %>%
+  spread_draws(`(Intercept)`, b[term, runner], `age`) %>%
+  pivot_wider(names_from = term, names_glue = "b_{term}",
+              values_from = b) %>%
+  mutate(runner_intercept = `(Intercept)` + `b_(Intercept)`,
+         runner_age = age + b_age)
+
+# Posterior mediány
+runner_summaries_2 <- runner_chains_2 %>%
+  group_by(runner) %>%
+  summarize(runner_intercept = median(runner_intercept),
+            runner_age = median(runner_age))
+
+head(runner_summaries_2, 10)
+```
+
+```{r model-2-viz}
+# Vizualizácia modelov špecifických pre bežca
+ggplot(running, aes(y = net, x = age, group = runner)) +
+  geom_abline(data = runner_summaries_2, color = "gray",
+              aes(intercept = runner_intercept, slope = runner_age)) +
+  labs(
+    title = "Posterior medián modely pre 36 bežcov (Random intercepts & slopes)",
+    x = "Vek (roky)",
+    y = "Čistý čas (minúty)"
+  ) +
+  coord_cartesian(xlim = c(50, 61), ylim = c(50, 135)) +
+  theme_minimal()
+```
+
+### Parametre variability
+
+```{r model-2-variance}
+tidy(running_model_2, effects = "ran_pars")
+```
+
+**Interpretácia:**
+
+- $\sigma_1 \approx 0.25$: Veľmi malá variabilita v sklonoch medzi bežcami
+- $\rho \approx -0.10$: Slabá negatívna korelácia (rýchlejší bežci mierne viac spomaľujú)
+
+# Hodnotenie a výber modelu
+
+## Posterior prediktívne kontroly
+
+```{r pp-checks, fig.height=4}
+# PP checks pre všetky tri modely
+p1 <- pp_check(complete_pooled_model) + 
+  labs(title = "Complete pooled") + 
+  theme_minimal()
+
+p2 <- pp_check(running_model_1) + 
+  labs(title = "Random intercepts") + 
+  theme_minimal()
+
+p3 <- pp_check(running_model_2) + 
+  labs(title = "Random intercepts & slopes") + 
+  theme_minimal()
+
+library(patchwork)
+p1 + p2 + p3
+```
+
+Complete pooled model podceňuje variabilitu v časoch behu.
+
+## Porovnanie predikčnej presnosti
+
+```{r prediction-summary}
+# Predikčné súhrny
+set.seed(84735)
+pred_1 <- prediction_summary(model = running_model_1, data = running)
+pred_2 <- prediction_summary(model = running_model_2, data = running)
+
+cat("Model 1 (Random intercepts):\n")
+print(pred_1)
+
+cat("\nModel 2 (Random intercepts & slopes):\n")
+print(pred_2)
+```
+
+## ELPD porovnanie
+
+```{r elpd-comparison}
+# ELPD pre oba hierarchické modely
+elpd_hierarchical_1 <- loo(running_model_1)
+elpd_hierarchical_2 <- loo(running_model_2)
+
+# Porovnanie
+loo_compare(elpd_hierarchical_1, elpd_hierarchical_2)
+```
+
+**Záver:** Vyberáme `running_model_1` (random intercepts), pretože:
+
+1. Complete pooled model je nesprávny a nemá silu detekovať vzťah
+2. Komplexita modelu 2 neprináša významné zlepšenie
+
+# Posterior predikcie
+
+## Predikcie pre známych a nových bežcov
+
+Predpokladajme, že chceme predpovedať čas behu v 61 rokoch pre:
+
+- Bežec 1 (v našej vzorke)
+- Bežec 10 (v našej vzorke)  
+- Miles (nový bežec, nie je v našej vzorke)
+
+```{r posterior-predictions}
+# Pozrime sa na trendy pre bežcov 1 a 10
+running %>%
+  filter(runner %in% c("1", "10")) %>%
+  ggplot(aes(x = age, y = net, color = runner)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    title = "Pozorované trendy pre bežcov 1 a 10",
+    x = "Vek (roky)",
+    y = "Čistý čas (minúty)"
+  ) +
+  theme_minimal()
+```
+
+```{r predictions-simulation}
+# Simulácia posterior prediktívnych modelov
+set.seed(84735)
+predict_next_race <- posterior_predict(
+  running_model_1,
+  newdata = data.frame(
+    runner = c("1", "Miles", "10"),
+    age = c(61, 61, 61)
+  )
+)
+
+# Vizualizácia prediktívnych rozdelení
+mcmc_areas(predict_next_race, prob = 0.8) +
+  scale_y_discrete(labels = c("Bežec 1", "Miles (nový)", "Bežec 10")) +
+  labs(
+    title = "Posterior prediktívne modely pre čas behu v 61 rokoch",
+    x = "Čistý čas (minúty)"
+  ) +
+  theme_minimal()
+```
+
+**Interpretácia:**
+
+- **Bežec 1**: Užšie rozdelenie (máme dáta), očakávame rýchlejší čas
+- **Bežec 10**: Užšie rozdelenie (máme dáta), očakávame pomalší čas
+- **Miles**: Širšie rozdelenie (nemáme dáta), predpokladáme priemerného bežca
+
+## Zdroje neistoty v predikciách
+
+Pre známych bežcov (1 a 10):
+
+1. **Variabilita v rámci skupiny** ($\sigma_y$): Nedokážeme dokonale predpovedať čas z modelu
+2. **Posterior variabilita** v parametroch $\beta_{0j}$, $\beta_1$, $\sigma_y$
+
+Pre nového bežca (Miles):
+
+3. **Variabilita medzi skupinami** ($\sigma_0$): Základné rýchlosti sa líšia od bežca k bežcovi
+
+# Príklad: Danceability na Spotify
+
+## Načítanie dát
+
+```{r spotify-data}
+data(spotify)
+spotify <- spotify %>%
+  select(artist, title, danceability, valence, genre)
+
+head(spotify, 10)
+```
+
+## Exploratívna analýza
+
+```{r spotify-eda, fig.height=4}
+p1 <- ggplot(spotify, aes(y = danceability, x = genre)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "Danceability podľa žánru") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p2 <- ggplot(spotify, aes(y = danceability, x = valence)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Danceability vs. Valence") +
+  theme_minimal()
+
+p1 + p2
+```
+
+```{r spotify-by-artist, fig.height=6}
+# Vzťah danceability a valence podľa interpreta
+ggplot(spotify, aes(y = danceability, x = valence, group = artist)) +
+  geom_smooth(method = "lm", se = FALSE, size = 0.5, alpha = 0.5) +
+  labs(
+    title = "Vzťah danceability a valence podľa interpreta",
+    x = "Valence (nálada)",
+    y = "Danceability"
+  ) +
+  theme_minimal()
+```
+
+## Modely
+
+**Model 1 (Random intercepts):**
+$$
+\mu_{ij} = \beta_{0j} + \beta_1 \text{valence}_{ij} + \beta_2 \text{latin}_{ij} + \cdots + \beta_6 \text{rock}_{ij}
+$$
+
+**Model 2 (Random intercepts & slopes):**
+$$
+\mu_{ij} = \beta_{0j} + \beta_{1j} \text{valence}_{ij} + \beta_2 \text{latin}_{ij} + \cdots + \beta_6 \text{rock}_{ij}
+$$
+
+```{r spotify-models}
+# Model 1: Random intercepts
+spotify_model_1 <- stan_glmer(
+  danceability ~ valence + genre + (1 | artist),
+  data = spotify, family = gaussian,
+  prior_intercept = normal(50, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 5000*2, seed = 84735
+)
+
+# Model 2: Random intercepts & slopes
+spotify_model_2 <- stan_glmer(
+  danceability ~ valence + genre + (valence | artist),
+  data = spotify, family = gaussian,
+  prior_intercept = normal(50, 2.5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  prior_covariance = decov(reg = 1, conc = 1, shape = 1, scale = 1),
+  chains = 4, iter = 5000*2, seed = 84735
+)
+```
+
+## Porovnanie modelov
+
+```{r spotify-comparison}
+# ELPD porovnanie
+elpd_spotify_1 <- loo(spotify_model_1)
+elpd_spotify_2 <- loo(spotify_model_2)
+
+loo_compare(elpd_spotify_1, elpd_spotify_2)
+```
+
+Vyberáme Model 1 kvôli jednoduchosti.
+
+## Analýza Modelu 1
+
+```{r spotify-analysis}
+# Globálne koeficienty
+tidy(spotify_model_1, effects = "fixed", 
+     conf.int = TRUE, conf.level = 0.80)
+```
+
+**Interpretácia:**
+
+- **Valence**: Každých 10 bodov nárastu valence zvyšuje danceability o 2.5-3 body
+- **Rock**: Jediný žáner významne menej tanečný ako EDM (-12 až -1.4 bodov)
+
+```{r spotify-genre-viz}
+mcmc_areas(spotify_model_1, pars = vars(starts_with("genre")), prob = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(title = "Posterior modely pre žánrové koeficienty") +
+  theme_minimal()
+```
+
+## Predikcie pre konkrétnych interpretov
+
+```{r spotify-predictions}
+# Porovnanie interpretov
+tidy(spotify_model_1, effects = "ran_vals",
+     conf.int = TRUE, conf.level = 0.80) %>%
+  filter(level %in% c("Camilo", "Missy_Elliott")) %>%
+  select(level, estimate, conf.low, conf.high)
+```
+
+```{r spotify-pred-viz}
+# Predikcie pre nové piesne
+set.seed(84735)
+predict_next_song <- posterior_predict(
+  spotify_model_1,
+  newdata = data.frame(
+    artist = c("Camilo", "Mohsen Beats", "Missy Elliott"),
+    valence = c(80, 60, 90), 
+    genre = c("latin", "rock", "rap")
+  )
+)
+
+mcmc_areas(predict_next_song, prob = 0.8) +
+  scale_y_discrete(labels = c("Camilo", "Mohsen Beats", "Missy Elliott")) +
+  labs(
+    title = "Posterior predikcie danceability pre budúce piesne",
+    x = "Danceability"
+  ) +
+  theme_minimal()
+```
+
+# Zhrnutie kapitoly
+
+## Hierarchická regresná štruktúra
+
+Pre dáta zoskupené v $m$ skupinách, kde $Y_{ij}$ je odpoveď a $(X_{ij1}, \ldots, X_{ijp})$ sú prediktory:
+
+$$
+\begin{align}
+Y_{ij} | \beta_j, \sigma_y & \sim N(\mu_{ij}, \sigma_y^2) & \text{(model v rámci skupiny)} \\
+\beta_j | \beta, \sigma & \sim N(\beta, \sigma^2) & \text{(variabilita medzi skupinami)} \\
+\beta, \sigma_y, \sigma, \ldots & \sim \cdots & \text{(priory na globálne parametre)}
+\end{align}
+$$
+
+## Typy modelov
+
+### Random intercepts model
+
+$$
+\mu_{ij} = \beta_{0j} + \beta_1 X_{ij1} + \cdots + \beta_p X_{ijp}
+$$
+
+- Skupiny majú rôzne základné úrovne
+- Vzťahy medzi $Y$ a $X$ sú rovnaké pre všetky skupiny
+
+### Random intercepts & slopes model
+
+$$
+\mu_{ij} = \beta_{0j} + \beta_{1j} X_{ij1} + \cdots + \beta_{pj} X_{ijp}
+$$
+
+- Skupiny majú rôzne základné úrovne
+- Vzťahy medzi $Y$ a $X$ sa líšia od skupiny k skupine
+
+### Zmiešaný model
+
+$$
+\mu_{ij} = \beta_{0j} + \beta_{1j} X_{ij1} + \beta_2 X_{ij2} + \cdots + \beta_p X_{ijp}
+$$
+
+- Niektoré prediktory majú group-specific koeficienty
+- Iné majú globálne koeficienty
+
+## Kľúčové predpoklady
+
+1. **Štruktúra dát**: Pozorovania v rámci skupiny sú korelované
+2. **Štruktúra vzťahu**: Lineárny vzťah medzi $Y$ a $X$
+3. **Variabilita v rámci skupín**: Normálne rozdelenie okolo priemeru
+4. **Variabilita medzi skupinami**: Group-specific parametre sú normálne rozdelené
+
+## Voľba modelu
+
+1. **Complete pooling vs Hierarchický**: Hierarchický ak existuje zmysluplná skupinová štruktúra
+2. **Random intercepts vs Random slopes**: Závisí od toho, či sa vzťahy líšia medzi skupinami
+3. **Nástroje**: Posterior prediktívne kontroly, ELPD, predikčná presnosť
+
+---
+
+*Študijný materiál vytvorený podľa kapitoly 17 z "Bayes Rules! An Introduction to Applied Bayesian Modeling" od Johnson, Ott, Dogucu.*

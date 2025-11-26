@@ -1,0 +1,890 @@
+---
+title: "Kapitola 8: Posterior Inference & Prediction"
+subtitle: "Bayes Rules! - Studijni material"
+author: "Bayesianska analyza"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = "center"
+)
+```
+
+# Uvod do kapitoly
+
+V tejto kapitole sa naucime vyuzivat posteriorny model na tri zakladne ulohy:
+
+1. **Posterior estimation** - odhad parametra pomocou kredibilnych intervalov
+2. **Posterior hypothesis testing** - testovanie hypotez
+3. **Posterior prediction** - predikcia novych dat
+
+## Motivacny priklad: Umenie v MoMA
+
+Predstavme si, ze stojime v Museum of Modern Art (MoMA) v New Yorku. Zaujima nas: **Aka je pravdepodobnost, ze nahodne vybrany umelec je Gen X alebo mladsi (narodeny 1965 alebo neskor)?**
+
+Nech $\pi$ oznacuje podiel umelcov v hlavnych americnych muzeach moderneho umenia, ktori su Gen X alebo mladsi.
+
+```{r packages, message=FALSE}
+# Nacitanie potrebnych balikov
+library(bayesrules)
+library(tidyverse)
+library(rstan)
+library(bayesplot)
+library(broom.mixed)
+library(janitor)
+
+# Nacitanie dat
+data("moma_sample")
+```
+
+## Priorna informacia
+
+Pouzijeme **Beta(4, 6)** prior, ktory reflektuje nasu vopred danu domnienku, ze vacsina umelcov v muzeach moderneho umenia je pravdepodobne starsia (moderna umenie datuje od 1880s a trvalo kym umelci ziskali uznanie).
+
+```{r prior-viz}
+# Vizualizacia prioru
+plot_beta(alpha = 4, beta = 6) +
+  labs(title = "Prior: Beta(4, 6)",
+       subtitle = "Nasa pociatocna predstava o podiele Gen X umelcov") +
+  theme_minimal()
+```
+
+## Data
+
+Z datasetu `moma_sample` mame vzorku 100 umelcov:
+
+```{r data-summary}
+# Kolko umelcov je Gen X alebo mladsich?
+moma_sample %>%
+  group_by(genx) %>%
+  tally()
+```
+
+Z 100 umelcov je **Y = 14** Gen X alebo mladsich.
+
+## Posteriorny model
+
+Podla Beta-Binomial modelu:
+
+$$
+\begin{aligned}
+Y | \pi & \sim \text{Bin}(100, \pi) \\
+\pi & \sim \text{Beta}(4, 6)
+\end{aligned}
+$$
+
+**Posterior:**
+
+$$
+\pi | (Y = 14) \sim \text{Beta}(18, 92)
+$$
+
+kde $\alpha' = \alpha + Y = 4 + 14 = 18$ a $\beta' = \beta + n - Y = 6 + 100 - 14 = 92$.
+
+Posteriorna hustota:
+
+$$
+f(\pi | y = 14) = \frac{\Gamma(18 + 92)}{\Gamma(18)\Gamma(92)}\pi^{18-1} (1-\pi)^{92-1} \quad \text{pre } \pi \in [0,1]
+$$
+
+```{r posterior-viz}
+# Vizualizacia: Prior, Likelihood, Posterior
+plot_beta_binomial(alpha = 4, beta = 6, y = 14, n = 100) +
+  labs(title = "Bayesianska aktualizacia pre MoMA data",
+       subtitle = "Prior Beta(4,6) + Data (Y=14, n=100) = Posterior Beta(18,92)") +
+  theme_minimal()
+```
+
+---
+
+# Posterior Estimation (Odhad)
+
+## Zakladne charakteristiky posterioru
+
+Cely posteriorny model predstavuje nas "odhad" parametra $\pi$. Pre sumarizaciu pouzivame:
+
+### Stredna hodnota a modus
+
+Pre **Beta($\alpha$, $\beta$)** rozdelenie:
+
+$$
+E(\pi | Y) = \frac{\alpha}{\alpha + \beta}
+$$
+
+$$
+\text{Mode}(\pi | Y) = \frac{\alpha - 1}{\alpha + \beta - 2} \quad \text{(pre } \alpha, \beta > 1\text{)}
+$$
+
+Pre nas posterior Beta(18, 92):
+
+$$
+E(\pi | Y = 14) = \frac{18}{18 + 92} = \frac{18}{110} \approx 0.164
+$$
+
+$$
+\text{Mode}(\pi | Y = 14) = \frac{18 - 1}{18 + 92 - 2} = \frac{17}{108} \approx 0.157
+$$
+
+```{r posterior-summary}
+# Vypocet posteriornych charakteristik
+alpha_post <- 18
+beta_post <- 92
+
+# Stredna hodnota
+post_mean <- alpha_post / (alpha_post + beta_post)
+cat("Posteriorna stredna hodnota:", round(post_mean, 4), "\n")
+
+# Modus
+post_mode <- (alpha_post - 1) / (alpha_post + beta_post - 2)
+cat("Posteriorny modus:", round(post_mode, 4), "\n")
+
+# Rozptyl
+post_var <- (alpha_post * beta_post) / ((alpha_post + beta_post)^2 * (alpha_post + beta_post + 1))
+cat("Posteriorny rozptyl:", round(post_var, 6), "\n")
+cat("Smerodajna odchylka:", round(sqrt(post_var), 4), "\n")
+```
+
+## Kredibilne intervaly (Credible Intervals)
+
+**Posteriorny kredibilny interval** (CI) poskytuje rozsah posteriornych vierohodnych hodnot parametra $\pi$.
+
+### Definicia
+
+Pre parameter $\pi$ s posteriornou pdf $f(\pi|y)$, **stredny 95% kredibilny interval** je dany 2.5-tym a 97.5-tym percentilom:
+
+$$
+(\pi_{0.025}, \pi_{0.975})
+$$
+
+**Interpretacia:** S 95% posteriornou pravdepodobnostou $\pi$ lezi v tomto intervale:
+
+$$
+P(\pi \in (\pi_{0.025}, \pi_{0.975}) | Y = y) = \int_{\pi_{0.025}}^{\pi_{0.975}} f(\pi|y) d\pi = 0.95
+$$
+
+### Vypocet 95% CI
+
+```{r ci-95}
+# 95% kredibilny interval pre Beta(18, 92)
+ci_95 <- qbeta(c(0.025, 0.975), alpha_post, beta_post)
+cat("95% CI pre pi:", round(ci_95, 4), "\n")
+```
+
+**Interpretacia:** S 95% posteriornou pravdepodobnostou je podiel Gen X umelcov v MoMA medzi 10.1% a 23.8%.
+
+### Rozne urovne kredibility
+
+```{r ci-various}
+# 50% CI
+ci_50 <- qbeta(c(0.25, 0.75), alpha_post, beta_post)
+cat("50% CI:", round(ci_50, 4), "\n")
+
+# 80% CI
+ci_80 <- qbeta(c(0.10, 0.90), alpha_post, beta_post)
+cat("80% CI:", round(ci_80, 4), "\n")
+
+# 99% CI
+ci_99 <- qbeta(c(0.005, 0.995), alpha_post, beta_post)
+cat("99% CI:", round(ci_99, 4), "\n")
+```
+
+### Vizualizacia kredibilnych intervalov
+
+```{r ci-viz, fig.height=8}
+# Priprava dat pre vizualizaciu
+pi_vals <- seq(0, 0.35, length.out = 1000)
+post_density <- dbeta(pi_vals, alpha_post, beta_post)
+
+# Vytvorenie grafov
+par(mfrow = c(3, 1), mar = c(4, 4, 3, 1))
+
+# 50% CI
+plot(pi_vals, post_density, type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = "50% Kredibilny interval")
+polygon(c(ci_50[1], pi_vals[pi_vals >= ci_50[1] & pi_vals <= ci_50[2]], ci_50[2]),
+        c(0, post_density[pi_vals >= ci_50[1] & pi_vals <= ci_50[2]], 0),
+        col = "lightblue", border = NA)
+lines(pi_vals, post_density, lwd = 2)
+
+# 95% CI
+plot(pi_vals, post_density, type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = "95% Kredibilny interval")
+polygon(c(ci_95[1], pi_vals[pi_vals >= ci_95[1] & pi_vals <= ci_95[2]], ci_95[2]),
+        c(0, post_density[pi_vals >= ci_95[1] & pi_vals <= ci_95[2]], 0),
+        col = "lightblue", border = NA)
+lines(pi_vals, post_density, lwd = 2)
+
+# 99% CI
+plot(pi_vals, post_density, type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = "99% Kredibilny interval")
+polygon(c(ci_99[1], pi_vals[pi_vals >= ci_99[1] & pi_vals <= ci_99[2]], ci_99[2]),
+        c(0, post_density[pi_vals >= ci_99[1] & pi_vals <= ci_99[2]], 0),
+        col = "lightblue", border = NA)
+lines(pi_vals, post_density, lwd = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Porovnanie dvoch posteriorov
+
+```{r compare-posteriors, fig.width=10, fig.height=5}
+# Nas posterior: Beta(18, 92) - 100 umelcov, 14 Gen X
+# Iny analytik: Beta(4, 16) - 10 umelcov, 0 Gen X (rovnaky prior Beta(4,6))
+
+par(mfrow = c(1, 2))
+
+# Nas posterior
+pi_vals <- seq(0, 0.5, length.out = 1000)
+plot(pi_vals, dbeta(pi_vals, 18, 92), type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = "Nas posterior: Beta(18, 92)\nn = 100, Y = 14",
+     xlim = c(0, 0.5))
+ci_our <- qbeta(c(0.025, 0.975), 18, 92)
+abline(v = ci_our, lty = 2, col = "blue")
+
+# Iny analytik
+plot(pi_vals, dbeta(pi_vals, 4, 16), type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = "Iny analytik: Beta(4, 16)\nn = 10, Y = 0",
+     xlim = c(0, 0.5))
+ci_other <- qbeta(c(0.025, 0.975), 4, 16)
+abline(v = ci_other, lty = 2, col = "red")
+
+par(mfrow = c(1, 1))
+
+cat("Nas 95% CI:", round(ci_our, 3), "\n")
+cat("Iny analytik 95% CI:", round(ci_other, 3), "\n")
+```
+
+**Zaver:** Aj ked oba maju podobnu centralnu tendenciu (~16%), nas interval je ovela uzsi vdaka vacsej vzorke (n=100 vs n=10).
+
+---
+
+# Posterior Hypothesis Testing (Testovanie hypotez)
+
+## Jednostranne testy (One-sided tests)
+
+### Priklad: Je podiel Gen X pod 20%?
+
+Hypotezy:
+$$
+\begin{aligned}
+H_0: & \quad \pi \geq 0.2 \\
+H_a: & \quad \pi < 0.2
+\end{aligned}
+$$
+
+**Posteriorna pravdepodobnost alternativnej hypotezy:**
+
+$$
+P(\pi < 0.2 | Y = 14) = \int_0^{0.2} f(\pi | y = 14) d\pi
+$$
+
+```{r hypothesis-one-sided}
+# Posteriorna pravdepodobnost, ze pi < 0.2
+post_prob_Ha <- pbeta(0.2, alpha_post, beta_post)
+cat("P(pi < 0.2 | Y = 14) =", round(post_prob_Ha, 4), "\n")
+
+# Posteriorna pravdepodobnost H0
+post_prob_H0 <- 1 - post_prob_Ha
+cat("P(pi >= 0.2 | Y = 14) =", round(post_prob_H0, 4), "\n")
+```
+
+### Vizualizacia
+
+```{r hypothesis-viz}
+# Vizualizacia posteriornej pravdepodobnosti
+pi_vals <- seq(0, 0.35, length.out = 1000)
+post_density <- dbeta(pi_vals, alpha_post, beta_post)
+
+plot(pi_vals, post_density, type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = expression(paste("P(", pi, " < 0.2 | Y = 14)")))
+
+# Zvyraznit oblast pod 0.2
+polygon(c(0, pi_vals[pi_vals <= 0.2], 0.2),
+        c(0, post_density[pi_vals <= 0.2], 0),
+        col = "lightblue", border = NA)
+lines(pi_vals, post_density, lwd = 2)
+abline(v = 0.2, lty = 2, col = "red", lwd = 2)
+text(0.12, 5, paste("P =", round(post_prob_Ha, 3)), cex = 1.2)
+```
+
+### Posterior Odds
+
+**Posteriorne sance (Posterior Odds)** pre $H_a$:
+
+$$
+\text{Posterior odds} = \frac{P(H_a | Y)}{P(H_0 | Y)} = \frac{0.849}{0.151} \approx 5.62
+$$
+
+```{r posterior-odds}
+post_odds <- post_prob_Ha / post_prob_H0
+cat("Posteriorne sance pre Ha:", round(post_odds, 2), "\n")
+```
+
+**Interpretacia:** Nas posterior naznacuje, ze $\pi < 0.2$ je priblizne **5.6-krat pravdepodobnejsie** ako $\pi \geq 0.2$.
+
+### Prior Odds a Bayes Factor
+
+**Priorne sance:**
+
+$$
+\text{Prior odds} = \frac{P(H_a)}{P(H_0)}
+$$
+
+```{r prior-odds}
+# Priorna pravdepodobnost, ze pi < 0.2 (z Beta(4,6) prioru)
+prior_prob_Ha <- pbeta(0.2, 4, 6)
+prior_prob_H0 <- 1 - prior_prob_Ha
+
+cat("Priorna P(pi < 0.2) =", round(prior_prob_Ha, 4), "\n")
+cat("Priorna P(pi >= 0.2) =", round(prior_prob_H0, 4), "\n")
+
+prior_odds <- prior_prob_Ha / prior_prob_H0
+cat("Priorne sance pre Ha:", round(prior_odds, 3), "\n")
+```
+
+**Bayes Factor:**
+
+$$
+\text{Bayes Factor (BF)} = \frac{\text{posterior odds}}{\text{prior odds}} = \frac{P(H_a|Y)/P(H_0|Y)}{P(H_a)/P(H_0)}
+$$
+
+```{r bayes-factor}
+BF <- post_odds / prior_odds
+cat("Bayes Factor:", round(BF, 2), "\n")
+```
+
+**Interpretacia Bayes Factoru:**
+
+- BF = 1: Data nezmenili nasu vieru v $H_a$
+- BF > 1: Data zvysili nasu vieru v $H_a$ (cim vacsie, tym presvedcivejsie)
+- BF < 1: Data znizili nasu vieru v $H_a$
+
+V nasom pripade **BF ≈ 60**, co znamena, ze data velmi silne podporuju hypotezu $H_a$ ($\pi < 0.2$).
+
+### Vizualizacia Prior vs Posterior
+
+```{r prior-post-compare, fig.width=10, fig.height=5}
+par(mfrow = c(1, 2))
+
+# Prior
+pi_vals <- seq(0, 0.8, length.out = 1000)
+prior_density <- dbeta(pi_vals, 4, 6)
+plot(pi_vals, prior_density, type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = "Prior: Beta(4, 6)")
+polygon(c(0, pi_vals[pi_vals <= 0.2], 0.2),
+        c(0, prior_density[pi_vals <= 0.2], 0),
+        col = "lightcoral", border = NA)
+lines(pi_vals, prior_density, lwd = 2)
+abline(v = 0.2, lty = 2)
+text(0.1, 1.5, paste("P =", round(prior_prob_Ha, 3)), cex = 1.1)
+
+# Posterior
+post_density <- dbeta(pi_vals, 18, 92)
+plot(pi_vals, post_density, type = "l", lwd = 2,
+     xlab = expression(pi), ylab = "Hustota",
+     main = "Posterior: Beta(18, 92)")
+polygon(c(0, pi_vals[pi_vals <= 0.2], 0.2),
+        c(0, post_density[pi_vals <= 0.2], 0),
+        col = "lightblue", border = NA)
+lines(pi_vals, post_density, lwd = 2)
+abline(v = 0.2, lty = 2)
+text(0.12, 8, paste("P =", round(post_prob_Ha, 3)), cex = 1.1)
+
+par(mfrow = c(1, 1))
+```
+
+## Dvojstranne testy (Two-sided tests)
+
+### Problem s presnou hodnotou
+
+Pri testovani presnej hodnoty (napr. $H_0: \pi = 0.3$) narazame na problem:
+
+$$
+P(\pi = 0.3 | Y = 14) = \int_{0.3}^{0.3} f(\pi | y = 14) d\pi = 0
+$$
+
+Pre spojite rozdelenie je pravdepodobnost presnej hodnoty vzdy 0!
+
+### Riesenie: Interval okolo hypotizovanej hodnoty
+
+Namiesto $H_0: \pi = 0.3$ testujeme:
+
+$$
+\begin{aligned}
+H_0: & \quad \pi \in (0.25, 0.35) \\
+H_a: & \quad \pi \notin (0.25, 0.35)
+\end{aligned}
+$$
+
+```{r two-sided}
+# 95% CI: (0.101, 0.238)
+# Je 0.3 (alebo interval okolo 0.3) mimo tento CI?
+
+cat("95% CI:", round(ci_95, 3), "\n")
+cat("Cely interval (0.25, 0.35) je MIMO 95% CI\n")
+cat("=> Mame dostatocny dokaz, ze pi sa lisi od 0.3\n")
+```
+
+---
+
+# Posterior Prediction (Predikcia)
+
+## Motivacia
+
+Predpokladajme, ze chceme predikovat vysledky pre **dalsich 20 umelcov**. Kolko z nich bude Gen X?
+
+## Dva zdroje variability
+
+Posteriorna prediktivna distribúcia musi zahrnovat:
+
+1. **Samplovacia variabilita v datach:** Pri nahodnom vybere 20 umelcov neocakavame presne 16% Gen X.
+
+2. **Posteriorna variabilita v $\pi$:** Hodnota $\pi$ nie je pevna - moze byt kdekolvel v intervale plausibilnych hodnot.
+
+## Matematicka formulacia
+
+Nech $Y'$ je pocet Gen X umelcov v novej vzorke velkosti $n' = 20$.
+
+**Podmienene na $\pi$:**
+$$
+Y' | \pi \sim \text{Bin}(20, \pi)
+$$
+
+**Posteriorna prediktivna pmf:**
+
+$$
+f(y' | y) = \int_0^1 f(y' | \pi) \cdot f(\pi | y) \, d\pi
+$$
+
+Kde:
+- $f(y' | \pi) = \binom{20}{y'} \pi^{y'} (1-\pi)^{20-y'}$ je binomicka pmf
+- $f(\pi | y)$ je posteriorna pdf (Beta(18, 92))
+
+## Intuicia
+
+Pre rozne hodnoty $\pi$ dostaneme rozne predikcie $Y'$:
+
+```{r prediction-intuition, fig.height=7}
+# Tri hodnoty pi: 2.5th percentil, modus, 97.5th percentil
+pi_values <- c(qbeta(0.025, 18, 92), 
+               (18-1)/(18+92-2),  # modus
+               qbeta(0.975, 18, 92))
+
+par(mfrow = c(3, 1), mar = c(4, 4, 3, 1))
+
+for (i in 1:3) {
+  pi_val <- pi_values[i]
+  # Vahove dbinom hodnotou posterioru
+  y_vals <- 0:20
+  probs <- dbinom(y_vals, 20, pi_val) * dbeta(pi_val, 18, 92)
+  
+  barplot(probs, names.arg = y_vals,
+          main = bquote(pi == .(round(pi_val, 3))),
+          xlab = "Y'", ylab = "Vazena pravdepodobnost",
+          col = "steelblue")
+}
+
+par(mfrow = c(1, 1))
+```
+
+**Pozorovanie:** Cim vyssia je $\pi$, tym viac Gen X umelcov ocakavame. Ale hodnoty $\pi$ daleko od modusu (0.16) maju mensiu vahu.
+
+## Presny vzorec pre posteriornu predikciu
+
+Pre Beta-Binomial model existuje uzavrety vzorec:
+
+$$
+f(y' | y = 14) = \binom{20}{y'} \frac{\Gamma(110)}{\Gamma(18)\Gamma(92)} \frac{\Gamma(18 + y')\Gamma(112 - y')}{\Gamma(130)}
+$$
+
+pre $y' \in \{0, 1, \ldots, 20\}$.
+
+```{r exact-predictive}
+# Vypocet posteriornej prediktivnej pmf
+posterior_predictive_pmf <- function(y_prime, n_new = 20, 
+                                     alpha_post = 18, beta_post = 92) {
+  # Beta-Binomial pmf
+  choose(n_new, y_prime) * 
+    beta(alpha_post + y_prime, beta_post + n_new - y_prime) / 
+    beta(alpha_post, beta_post)
+}
+
+# Vypocet pre vsetky mozne hodnoty
+y_prime_vals <- 0:20
+pred_probs <- sapply(y_prime_vals, posterior_predictive_pmf)
+
+# Overenie, ze suma je 1
+cat("Suma pmf:", sum(pred_probs), "\n")
+
+# Zobrazenie
+pred_df <- data.frame(
+  y_prime = y_prime_vals,
+  probability = pred_probs
+)
+
+# Najvyssie pravdepodobnosti
+pred_df %>%
+  arrange(desc(probability)) %>%
+  head(10)
+```
+
+## Vizualizacia posteriornej prediktivnej distribucie
+
+```{r pred-viz}
+ggplot(pred_df, aes(x = y_prime, y = probability)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  labs(title = "Posteriorna prediktivna distribúcia",
+       subtitle = "Pocet Gen X umelcov z dalsich 20",
+       x = "Y' (pocet Gen X umelcov)",
+       y = "Pravdepodobnost") +
+  scale_x_continuous(breaks = 0:20) +
+  theme_minimal()
+```
+
+## Charakteristiky prediktivnej distribucie
+
+```{r pred-summary}
+# Ocakavana hodnota
+E_Y_prime <- sum(y_prime_vals * pred_probs)
+cat("E(Y' | Y = 14) =", round(E_Y_prime, 3), "\n")
+
+# P(Y' >= 5)
+prob_5_or_more <- sum(pred_probs[y_prime_vals >= 5])
+cat("P(Y' >= 5 | Y = 14) =", round(prob_5_or_more, 3), "\n")
+
+# Modus
+mode_Y_prime <- y_prime_vals[which.max(pred_probs)]
+cat("Mode(Y' | Y = 14) =", mode_Y_prime, "\n")
+```
+
+---
+
+# Posterior Analysis with MCMC
+
+V praxi casto nemozeme odvodit posteriorny model analyticky. Vtedy pouzivame **MCMC simulaciu**.
+
+## Simulacia posterioru pomocou Stan
+
+```{r stan-model, results='hide', cache=TRUE}
+# KROK 1: Definicia modelu
+art_model <- "
+data {
+  int<lower = 0, upper = 100> Y;
+}
+parameters {
+  real<lower = 0, upper = 1> pi;
+}
+model {
+  Y ~ binomial(100, pi);
+  pi ~ beta(4, 6);
+}
+"
+
+# KROK 2: Simulacia posterioru
+art_sim <- stan(model_code = art_model, 
+                data = list(Y = 14),
+                chains = 4, 
+                iter = 5000 * 2,  # 5000 warmup + 5000 sampling
+                seed = 84735,
+                refresh = 0)  # suppress output
+```
+
+## MCMC Diagnostika
+
+```{r mcmc-diagnostics, fig.height=8}
+# Trace plots
+p1 <- mcmc_trace(art_sim, pars = "pi", size = 0.3) +
+  labs(title = "Trace plot", x = "Iteracia") +
+  theme_minimal()
+
+# Density overlay
+p2 <- mcmc_dens_overlay(art_sim, pars = "pi") +
+  labs(title = "Hustota (4 retazce)") +
+  theme_minimal()
+
+# Autocorrelation
+p3 <- mcmc_acf(art_sim, pars = "pi") +
+  labs(title = "Autokorelácia") +
+  theme_minimal()
+
+# Zobrazenie
+library(patchwork)
+(p1 / p2 / p3)
+```
+
+**Interpretacia diagnostiky:**
+- **Trace plot:** Retazce vyzeraju ako "nahodny sum" - dobre!
+- **Density overlay:** Vsetky 4 retazce maju velmi podobnu distribuciu - dobre!
+- **Autokorelácia:** Rychlo klesa k 0 - dobre!
+
+```{r rhat-ess}
+# Rhat a ESS
+summary(art_sim, pars = "pi")$summary
+```
+
+- **Rhat ≈ 1:** Retazce konvergovali
+- **n_eff:** Efektivna velkost vzorky
+
+## Porovnanie: Presny posterior vs MCMC aproximacia
+
+```{r compare-exact-mcmc, fig.width=10, fig.height=5}
+par(mfrow = c(1, 2))
+
+# Presny posterior
+pi_vals <- seq(0, 0.35, length.out = 1000)
+plot(pi_vals, dbeta(pi_vals, 18, 92), type = "l", lwd = 2,
+     main = "Presny posterior: Beta(18, 92)",
+     xlab = expression(pi), ylab = "Hustota")
+
+# MCMC aproximacia
+mcmc_dens(art_sim, pars = "pi") +
+  xlim(0, 0.35) +
+  labs(title = "MCMC aproximacia") +
+  theme_minimal()
+
+par(mfrow = c(1, 1))
+```
+
+## Odhad pomocou MCMC
+
+```{r mcmc-estimation}
+# Rychly sumar pomocou tidy()
+tidy(art_sim, conf.int = TRUE, conf.level = 0.95)
+```
+
+```{r mcmc-areas}
+# Vizualizacia s CI
+mcmc_areas(art_sim, pars = "pi", prob = 0.95) +
+  labs(title = "Posteriorny odhad s 95% CI",
+       subtitle = "Vertikalna ciara = median") +
+  theme_minimal()
+```
+
+## Priama praca s MCMC hodnotami
+
+```{r mcmc-chains-df}
+# Konverzia na data frame
+art_chains_df <- as.data.frame(art_sim, pars = "lp__", include = FALSE)
+
+# Kontrola
+dim(art_chains_df)
+head(art_chains_df)
+```
+
+```{r mcmc-summaries}
+# Vypocet posteriornych sumarov
+art_chains_df %>%
+  summarize(
+    post_mean = mean(pi),
+    post_median = median(pi),
+    post_sd = sd(pi),
+    lower_95 = quantile(pi, 0.025),
+    upper_95 = quantile(pi, 0.975)
+  )
+```
+
+## Testovanie hypotez pomocou MCMC
+
+```{r mcmc-hypothesis}
+# P(pi < 0.2 | Y = 14) - aproximacia
+art_chains_df %>%
+  summarize(
+    prop_below_02 = mean(pi < 0.2),
+    prop_below_015 = mean(pi < 0.15),
+    prop_below_025 = mean(pi < 0.25)
+  )
+```
+
+**Porovnanie s presnou hodnotou:**
+```{r compare-hypothesis}
+cat("Presna hodnota P(pi < 0.2):", round(pbeta(0.2, 18, 92), 4), "\n")
+cat("MCMC aproximacia:", round(mean(art_chains_df$pi < 0.2), 4), "\n")
+```
+
+## Posteriorna predikcia pomocou MCMC
+
+```{r mcmc-prediction}
+set.seed(1)
+
+# Pre kazdu hodnotu pi v retazci simulujeme Y'
+art_chains_df <- art_chains_df %>%
+  mutate(y_predict = rbinom(n = n(), size = 20, prob = pi))
+
+# Prvy pohlad
+art_chains_df %>%
+  head(10)
+```
+
+```{r mcmc-pred-viz}
+# Histogram predikci
+ggplot(art_chains_df, aes(x = y_predict)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", 
+                 color = "white", alpha = 0.8) +
+  labs(title = "Posteriorna prediktivna distribúcia (MCMC)",
+       subtitle = "Pocet Gen X umelcov z dalsich 20",
+       x = "Y'",
+       y = "Pocet") +
+  scale_x_continuous(breaks = 0:15) +
+  theme_minimal()
+```
+
+```{r mcmc-pred-summary}
+# Sumar predikci
+art_chains_df %>%
+  summarize(
+    pred_mean = mean(y_predict),
+    pred_median = median(y_predict),
+    pred_sd = sd(y_predict),
+    lower_80 = quantile(y_predict, 0.1),
+    upper_80 = quantile(y_predict, 0.9)
+  )
+
+# P(Y' >= 5)
+cat("P(Y' >= 5 | Y = 14):", mean(art_chains_df$y_predict >= 5), "\n")
+```
+
+## Porovnanie MCMC a presnych hodnot
+
+```{r final-comparison}
+# Tabulka porovnania
+comparison <- tibble(
+  Charakteristika = c("Mean", "Mode", "2.5th percentil", "97.5th percentil"),
+  `Presna hodnota` = c(
+    18/110,
+    17/108,
+    qbeta(0.025, 18, 92),
+    qbeta(0.975, 18, 92)
+  ),
+  `MCMC aproximacia` = c(
+    mean(art_chains_df$pi),
+    as.numeric(names(which.max(table(round(art_chains_df$pi, 3))))),
+    quantile(art_chains_df$pi, 0.025),
+    quantile(art_chains_df$pi, 0.975)
+  )
+)
+
+comparison %>%
+  mutate(across(where(is.numeric), ~round(., 4)))
+```
+
+**Zaver:** MCMC aproximacie su velmi presne!
+
+---
+
+# Bayesian Benefits (Vyhody Bayesovského pristupu)
+
+## Intuitivna interpretacia
+
+**Bayesovsky pristup** hodnoti neistotu o neznámom parametri $\pi$ v svetle pozorovanych dat $Y$:
+
+$$
+P(\pi < 0.20 | Y = 14) = 0.849
+$$
+
+**Interpretacia:** S 84.9% posteriornou pravdepodobnostou je podiel Gen X umelcov pod 20%.
+
+## Porovnanie s frekventistickym pristupom
+
+**Frekventisticky pristup** hodnoti neistotu o datach $Y$ za predpokladu hodnoty $\pi$:
+
+$$
+P(Y \leq 14 | \pi = 0.20) = 0.08 \quad \text{(p-hodnota)}
+$$
+
+**Interpretacia:** Ak by $\pi$ bolo presne 0.20, pravdepodobnost pozorovania 14 alebo menej Gen X umelcov je 8%.
+
+### Klucovy rozdiel
+
+| Aspekt | Bayesovsky | Frekventisticky |
+|--------|------------|-----------------|
+| Podmienene na | Data $Y$ | Parameter $\pi$ |
+| Pytame sa | "Ake hodnoty $\pi$ su vierohodne?" | "Ako pravdepodobne su nase data?" |
+| Interpretacia | Priama, intuitivna | Nepriama, casto nepochopena |
+
+## Prakticky priklad
+
+```{r frequentist-comparison}
+# Bayesovska pravdepodobnost
+bayes_prob <- pbeta(0.2, 18, 92)
+cat("Bayesovska P(pi < 0.2 | Y = 14):", round(bayes_prob, 4), "\n")
+
+# Frekventisticka p-hodnota (binomicky test)
+freq_pvalue <- pbinom(14, 100, 0.2)
+cat("Frekventisticka p-hodnota P(Y <= 14 | pi = 0.2):", round(freq_pvalue, 4), "\n")
+```
+
+---
+
+# Zhrnutie kapitoly
+
+V tejto kapitole sme sa naucili tri hlavne ulohy posteriornej analyzy:
+
+## 1. Posterior Estimation
+
+- **Bodove odhady:** stredna hodnota, modus, median
+- **Intervalove odhady:** Kredibilny interval (CI)
+- **Klucovy vzorec pre CI:**
+$$
+P(\pi \in (\pi_{0.025}, \pi_{0.975}) | Y = y) = 0.95
+$$
+
+## 2. Posterior Hypothesis Testing
+
+- **Jednostranne testy:** Priamy vypocet posteriornej pravdepodobnosti
+- **Posterior Odds:**
+$$
+\text{Posterior odds} = \frac{P(H_a | Y)}{P(H_0 | Y)}
+$$
+- **Bayes Factor:**
+$$
+BF = \frac{\text{Posterior odds}}{\text{Prior odds}}
+$$
+- **Dvojstranne testy:** Pouzitie kredibilnych intervalov alebo intervalovych hypotez
+
+## 3. Posterior Prediction
+
+- Kombinuje **samplovacii variabilitu** a **posteriornu variabilitu**
+- **Klucovy vzorec:**
+$$
+f(y' | y) = \int f(y' | \pi) \cdot f(\pi | y) \, d\pi
+$$
+
+## 4. MCMC Simulacia
+
+- Ked analyticky posterior nie je dostupny
+- **Diagnostika:** Trace plots, R-hat, ESS, autokorelácia
+- **Aproximacia:** Vsetky posteriorne charakteristiky mozeme odhadnut z MCMC vzorky
+
+---
+
+# Referencie
+
+- Johnson, A. A., Ott, M. Q., & Dogucu, M. (2022). *Bayes Rules! An Introduction to Applied Bayesian Modeling*. CRC Press.
+- Kapitola 8: [https://www.bayesrulesbook.com/chapter-8](https://www.bayesrulesbook.com/chapter-8)
+
+```{r session-info}
+sessionInfo()
+```
