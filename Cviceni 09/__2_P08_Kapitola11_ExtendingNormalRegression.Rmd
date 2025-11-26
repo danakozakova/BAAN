@@ -1,0 +1,292 @@
+## Cross-validation porovnanie
+
+```{r cv-comparison, cache=TRUE}
+set.seed(84735)
+
+# 10-fold cross-validation pre všetky modely
+cv_1 <- prediction_summary_cv(model = weather_model_1, 
+                               data = weather_WU, k = 10)
+cv_2 <- prediction_summary_cv(model = weather_model_2, 
+                               data = weather_WU, k = 10)
+cv_3 <- prediction_summary_cv(model = weather_model_3, 
+                               data = weather_WU, k = 10)
+cv_4 <- prediction_summary_cv(model = weather_model_4, 
+                               data = weather_WU, k = 10)
+
+# Vytvorenie porovnávacej tabuľky
+cv_summary <- tibble(
+  Model = c("Model 1", "Model 2", "Model 3", "Model 4"),
+  Formula = c("temp9am", "location", "temp9am + location", "všetky"),
+  MAE = c(cv_1$cv$mae, cv_2$cv$mae, cv_3$cv$mae, cv_4$cv$mae),
+  MAE_scaled = c(cv_1$cv$mae_scaled, cv_2$cv$mae_scaled, 
+                 cv_3$cv$mae_scaled, cv_4$cv$mae_scaled),
+  within_50 = c(cv_1$cv$within_50, cv_2$cv$within_50, 
+                cv_3$cv$within_50, cv_4$cv$within_50),
+  within_95 = c(cv_1$cv$within_95, cv_2$cv$within_95, 
+                cv_3$cv$within_95, cv_4$cv$within_95)
+)
+
+cv_summary
+```
+
+
+
+**Interpretácia:**
+
+- **Model 1** (len `temp9am`): MAE = `r round(cv_1$cv$mae, 2)` → lepší ako Model 2
+- **Model 2** (len `location`): MAE = `r round(cv_2$cv$mae, 2)` → horší
+- **Model 3** (oba): **MAE = `r round(cv_3$cv$mae, 2)` → najlepší!**
+- **Model 4** (všetky): MAE = `r round(cv_4$cv$mae, 2)` → tesne za Modelom 3
+
+**Záver:** Model 3 dosahuje najlepšie predikcie! Pridanie ďalších 3 prediktorov v Modeli 4 nepomáha.
+
+## ELPD porovnanie
+
+```{r elpd-comparison, cache=TRUE}
+# Výpočet ELPD pre všetky modely
+set.seed(84735)
+loo_1 <- loo(weather_model_1)
+loo_2 <- loo(weather_model_2)
+loo_3 <- loo(weather_model_3)
+loo_4 <- loo(weather_model_4)
+
+# ELPD hodnoty
+c(loo_1$estimates[1], loo_2$estimates[1],
+  loo_3$estimates[1], loo_4$estimates[1])
+
+# Porovnanie modelov
+loo_compare(loo_1, loo_2, loo_3, loo_4)
+```
+
+**Interpretácia ELPD:**
+
+- **Vyšší ELPD = lepší model**
+- Modely sú zoradené od najlepšieho (Model 4) po najhorší (Model 2)
+- Model 3 je len 3.5 jednotiek horší ako Model 4 (SE = 4.0)
+- Rozdiel nie je signifikantný: $-3.5 \pm 2 \times 4 = (-11.5, 4.5)$ zahŕňa 0
+
+**Pravidlo porovnania:**
+
+Model 1 je **signifikantne lepší** ako Model 2 ak:
+
+1. $\text{ELPD}_1 > \text{ELPD}_2$
+2. $(\text{ELPD}_2 - \text{ELPD}_1) + 2 \times \text{SE}_{\text{diff}} < 0$
+
+**Záverečné rozhodnutie:**
+
+Model 3 a Model 4 sú podobne dobré, ale **Model 3 je jednoduchší**, preto ho preferujeme!
+
+
+# Bias-Variance Trade-off
+
+Pri budovaní modelov musíme nájsť rovnováhu:
+
+- **Príliš jednoduchý model** → vysoký bias, nízka variancia
+- **Príliš zložitý model** → nízky bias, vysoká variancia (overfit)
+
+## Ilustračný príklad
+
+Použijeme vzorky dát z Wollongongu a skúsime modelovať teplotu podľa dňa v roku:
+
+```{r bias-variance-data}
+# Príprava dvoch vzoriek
+set.seed(84735)
+weather_shuffle <- weather_australia %>%
+  filter(temp3pm < 30, location == "Wollongong") %>%
+  sample_n(nrow(.))
+
+sample_1 <- weather_shuffle %>% head(40)
+sample_2 <- weather_shuffle %>% tail(40)
+
+# Vizualizácia sample 1
+ggplot(sample_1, aes(x = day_of_year, y = temp3pm)) +
+  geom_point(size = 3, alpha = 0.7, color = "steelblue") +
+  labs(
+    title = "Vzorka 1: Teplota podľa dňa v roku (Wollongong)",
+    x = "Deň v roku",
+    y = "Teplota o 15:00 (°C)"
+  )
+```
+
+## Tri rôzne modely
+
+Porovnáme tri polynomiálne modely:
+
+1. **Model 1** (lineárny): $\mu = \beta_0 + \beta_1 X$ → 1 prediktor
+2. **Model 2** (kvadratický): $\mu = \beta_0 + \beta_1 X + \beta_2 X^2$ → 2 prediktory
+3. **Model 3** (12. rádu): $\mu = \beta_0 + \beta_1 X + \cdots + \beta_{12} X^{12}$ → 12 prediktorov
+
+```{r bias-variance-models, cache=TRUE}
+# Fit modelov na sample_1
+poly_model_1 <- stan_glm(
+  temp3pm ~ day_of_year,
+  data = sample_1, family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735, refresh = 0
+)
+
+poly_model_2 <- stan_glm(
+  temp3pm ~ poly(day_of_year, 2),
+  data = sample_1, family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735, refresh = 0
+)
+
+poly_model_3 <- stan_glm(
+  temp3pm ~ poly(day_of_year, 12),
+  data = sample_1, family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735, refresh = 0
+)
+```
+
+## Vizualizácia bias-variance trade-off
+
+```{r bias-variance-viz}
+# Pomocná funkcia pre grafy
+g1 <- ggplot(sample_1, aes(x = day_of_year, y = temp3pm)) +
+  geom_point(size = 2, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1.2) +
+  labs(title = "Model 1: Vysoký bias, nízka variancia", 
+       x = "Deň v roku", y = "")
+
+g2 <- ggplot(sample_1, aes(x = day_of_year, y = temp3pm)) +
+  geom_point(size = 2, alpha = 0.6) +
+  stat_smooth(method = "lm", se = FALSE, 
+              formula = y ~ poly(x, 2), 
+              color = "darkgreen", linewidth = 1.2) +
+  labs(title = "Model 2: Dobrá rovnováha", 
+       x = "Deň v roku", y = "")
+
+g3 <- ggplot(sample_1, aes(x = day_of_year, y = temp3pm)) +
+  geom_point(size = 2, alpha = 0.6) +
+  stat_smooth(method = "lm", se = FALSE, 
+              formula = y ~ poly(x, 12), 
+              color = "purple", linewidth = 1.2) +
+  labs(title = "Model 3: Nízky bias, vysoká variancia", 
+       x = "Deň v roku", y = "")
+
+g1 / g2 / g3
+```
+
+## Raw vs CV prediction errors
+
+```{r bias-variance-errors, cache=TRUE}
+set.seed(84735)
+
+# Raw prediction errors (na training dátach)
+pred_1 <- prediction_summary(model = poly_model_1, data = sample_1)
+pred_2 <- prediction_summary(model = poly_model_2, data = sample_1)
+pred_3 <- prediction_summary(model = poly_model_3, data = sample_1)
+
+# Cross-validated errors
+cv_poly_1 <- prediction_summary_cv(model = poly_model_1, 
+                                    data = sample_1, k = 10)
+cv_poly_2 <- prediction_summary_cv(model = poly_model_2, 
+                                    data = sample_1, k = 10)
+cv_poly_3 <- prediction_summary_cv(model = poly_model_3, 
+                                    data = sample_1, k = 10)
+
+# Tabuľka porovnania
+bias_var_table <- tibble(
+  Model = c("Model 1 (lineárny)", 
+            "Model 2 (kvadratický)", 
+            "Model 3 (12. rádu)"),
+  Raw_MAE = c(pred_1$mae, pred_2$mae, pred_3$mae),
+  CV_MAE = c(cv_poly_1$cv$mae, cv_poly_2$cv$mae, cv_poly_3$cv$mae),
+  Ratio = CV_MAE / Raw_MAE
+)
+
+bias_var_table
+```
+
+**Interpretácia:**
+
+- **Model 1**: Raw MAE ≈ CV MAE → stabilný, ale biased (nesprávny)
+- **Model 2**: Najnižší CV MAE → **najlepšia rovnováha!**
+- **Model 3**: CV MAE ≈ 2× Raw MAE → **overfit!** (nízky bias, vysoká variancia)
+
+**Bias-Variance Trade-off:**
+
+| Vlastnosť | Príliš jednoduchý model | Dobrá rovnováha | Príliš zložitý model |
+|-----------|-------------------------|-----------------|---------------------|
+| Bias | Vysoký | Stredný | Nízky |
+| Variancia | Nízka | Stredná | Vysoká |
+| CV MAE | Vysoké | **Nízke** | Vysoké |
+
+
+# Zhrnutie kapitoly 11
+
+V kapitole 11 sme rozšírili našu regresný toolkit o **multivariabilné Bayesiánske normálne lineárne regresné modely**.
+
+## Všeobecná forma modelu
+
+Pre kvantitatívnu response premennú $Y$ a $p$ prediktorov $(X_1, X_2, \ldots, X_p)$ ktoré môžu byť kvantitatívne, kategoriálne, interakčné členy alebo ich kombinácia:
+
+$$
+\begin{array}{lcrl}
+\text{data:} & \hspace{.05in} & Y_i|\beta_0,\beta_1,\ldots,\beta_p,\sigma & \stackrel{ind}{\sim} N(\mu_i, \; \sigma^2) \;\; \text{ kde } \; \mu_i = \beta_0 + \beta_1X_{i1} + \cdots + \beta_p X_{ip} \\
+\text{priory:} & & \beta_{0c} & \sim N\left(m_0, s_0^2 \right) \\
+& & \beta_{1} & \sim N\left(m_1, s_1^2 \right) \\
+&& \vdots & \\
+& & \beta_{p} & \sim N\left(m_p, s_p^2 \right) \\
+& & \sigma & \sim \text{Exp}(l)
+\end{array}
+$$
+
+## Kľúčové body
+
+1. **Multivariabilná regresia** môže zlepšiť naše predikcie a porozumenie $Y$ zahrnutím viacerých prediktorov
+
+2. **Interpretácia koeficientov** závisí od ostatných prediktorov v modeli:
+   - Kvantitatívny prediktor: zmena v $Y$ pri zvýšení $X_i$ o 1 jednotku, **pri kontrole ostatných**
+   - Kategoriálny prediktor: rozdiel v $Y$ oproti referenčnej kategórii, **pri kontrole ostatných**
+
+3. **Interakcie** umožňujú modelovať prípady, kde efekt jedného prediktora závisí od druhého
+
+4. **Bias-variance trade-off**:
+   - Príliš jednoduchý model → vysoký bias (nesprávny)
+   - Príliš zložitý model → vysoká variancia (overfit)
+   - **Cieľ**: Nájsť rovnováhu s relatívne nízkym biasom a nízkou varianciou
+
+5. **Evaluácia modelov**:
+   - Posterior predictive checks (vizuálne)
+   - Cross-validation (MAE, pokrytie)
+   - ELPD (expected log-predictive density)
+
+## Praktické odporúčania
+
+✅ **Použite multivariabilné modely** keď máte viacero relevantných prediktorov
+
+✅ **Vizualizujte vzťahy** pred modelovaním (identifikácia interakcií)
+
+✅ **Porovnajte modely** pomocou CV a ELPD
+
+✅ **Preferujte jednoduchosť** - viac prediktorov nie je vždy lepšie!
+
+✅ **Kontrolujte MCMC diagnostiku** - vždy!
+
+❌ **Nepridávajte automaticky interakcie** - iba ak majú zmysel
+
+❌ **Nezabudnite na prior specification** - weakly informative priory sú dobrý štart
+
+
+---
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+
+**Koniec kapitoly 11**
+
+Ďalej pokračujeme na kapitolu 12, kde sa budeme venovať **logistickej regresii** pre binárne response premenné!

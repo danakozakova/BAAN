@@ -1,0 +1,852 @@
+---
+title: "Kapitola 11: Rozširovanie normálneho regresného modelu"
+subtitle: "Bayes Rules! - Učebné materiály"
+author: "Dana"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: united
+    highlight: tango
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6,
+  comment = "#>"
+)
+```
+
+# Úvod do kapitoly 11
+
+Bayesiánsky jednoduchý normálny lineárny regresný model z kapitol 9 a 10 je ako miska čistej ryže - chutná sama o sebe a zároveň poskytuje pevný základ na stavanie. V kapitole 11 budeme skúmať rozšírenia tohto modelu, ktoré výrazne rozširujú jeho flexibilitu v širších modelovacích kontextoch.
+
+**Ciele kapitoly:**
+
+- Rozšíriť normálny lineárny regresný model na prípady s:
+  - kategoriálnym prediktorom $X$
+  - viacerými prediktormi $(X_1, X_2, ..., X_p)$
+  - prediktormi ktoré interagujú
+
+- Porovnať a vyhodnotiť konkurenčné modely $Y$ pre odpoveď na otázku: "Ktorý model by som mal zvoliť?"
+
+- Zvážiť bias-variance trade-off pri budovaní regresného modelu $Y$ s viacerými prediktormi
+
+## Načítanie potrebných balíkov
+
+```{r packages}
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(broom.mixed)
+library(tidybayes)
+library(patchwork)
+
+# Nastavenie témy pre grafy
+theme_set(theme_minimal())
+```
+
+## Načítanie a príprava dát
+
+Budeme pracovať s dátami o počasí v Austrálii (`weather_WU`), ktoré obsahujú 100 dní počasia pre každé z dvoch austrálskych miest: Uluru a Wollongong.
+
+```{r load-data}
+# Načítanie dát
+data(weather_WU)
+
+# Prehľad dát
+weather_WU %>%
+  group_by(location) %>%
+  tally()
+
+# Zobrazenie prvých riadkov
+head(weather_WU)
+
+# Výber relevantných premenných
+weather_WU <- weather_WU %>%
+  select(location, windspeed9am, humidity9am, pressure9am, temp9am, temp3pm)
+
+# Prehľad štruktúry dát
+glimpse(weather_WU)
+```
+
+## Základný scatter plot
+
+Začneme analýzou vzťahu medzi rannou teplotou (`temp9am`) a popoludňajšou teplotou (`temp3pm`):
+
+```{r basic-scatter}
+ggplot(weather_WU, aes(x = temp9am, y = temp3pm)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Vzťah medzi rannou a popoludňajšou teplotou",
+    x = "Teplota o 9:00 (°C)",
+    y = "Teplota o 15:00 (°C)"
+  )
+```
+
+**Poznámka:** Graf ukazuje silnú pozitívnu asociáciu medzi rannými a popoludňajšími teplotami. Tiež vidíme dve odlišné zhluky bodov, čo naznačuje prítomnosť kategorickej premennej (lokácie).
+
+
+# Model 1: Jednoduchá regresia s kvantitativným prediktorom
+
+## Formulácia modelu
+
+Nech $Y_i$ označuje teplotu o 15:00 a $X_{i1}$ označuje teplotu o 9:00 v deň $i$. Bayesiánsky normálny regresný model $Y$ podľa $X_1$ je:
+
+$$
+\begin{equation}
+\begin{split}
+Y_i | \beta_0, \beta_1, \sigma & \stackrel{ind}{\sim} N\left(\mu_i, \sigma^2\right) \;\; \text{ kde } \;\; \mu_i = \beta_0 + \beta_1X_{i1} \\
+\beta_{0c}& \sim N\left(25, 5^2\right) \\
+\beta_1 & \sim N\left(0, 3.1^2\right) \\
+\sigma & \sim \text{Exp}(0.13)
+\end{split}
+\end{equation}
+$$
+
+**Interpretácia priorov:**
+
+- $\beta_{0c}$: Centrovaný intercept odráža naše očakávanie, že priemerná popoludňajšia teplota v typický deň je niekde medzi 15 a 35 stupňami ($25 \pm 2 \times 5$) (nulový intercept nepoznáme)
+- $\beta_1$: Weakly informative prior centrovaný okolo 0 odráža konzervatívne očakávanie, že vzťah môže byť pozitívny, negatívny alebo neexistujúci $\sigma$ je zistená cez autoscale parameter pre metódu `stan_glm()`
+- $\sigma$: Weakly informative prior pre štandardnú odchýlku, tiež je autoscaled
+
+## Simulácia posterioru
+
+```{r model1}
+weather_model_1 <- stan_glm(
+  temp3pm ~ temp9am,
+  data = weather_WU, 
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  refresh = 0  # Vypnutie progress messages
+)
+```
+
+## Kontrola priorov
+
+```{r model1-priors}
+prior_summary(weather_model_1)
+```
+
+## MCMC diagnostika
+
+```{r model1-diagnostics}
+# Trace plots
+mcmc_trace(weather_model_1, size = 0.1)
+
+# Density overlays
+mcmc_dens_overlay(weather_model_1)
+
+# Autocorrelation
+mcmc_acf(weather_model_1)
+
+# Effective sample size ratio
+neff_ratio(weather_model_1)
+
+# R-hat values
+rhat(weather_model_1)
+```
+
+## Posterior summary
+
+```{r model1-summary}
+# Posterior intervaly
+posterior_interval(weather_model_1, prob = 0.80)
+
+# Tidy summary
+tidy(weather_model_1, effects = c("fixed", "aux"), 
+     conf.int = TRUE, conf.level = 0.80)
+```
+
+**Interpretácia:**
+
+Pre 80% kredibilný interval pre $\beta_1$ existuje 80% posteriorná pravdepodobnosť, že pre každý jeden stupeň nárastu `temp9am`, priemerný nárast `temp3pm` je niekde medzi 0.98 a 1.1 stupňami.
+ Navyše, podľa 80 % intervalu spoľahlivosti pre štandardnú odchýlku $\sigma$ je tento vzťah pomerne silný – pozorované popoludňajšie teploty sa zvyčajne pohybujú v rozmedzí iba 3,87 až 4,41 stupňa od toho, čo by sme očakávali na základe zodpovedajúcej rannej teploty.
+ 
+## Posterior predictive check
+Ale je to „dobrý“ model? Táto otázka bude podrobnejšie rozoberaná v časti 11.5. Teraz vám ponúkame rýchlu funkciu  `pp_check()` , ktorá ilustruje, že to vieme urobiť lepšie (obrázok 11.2). Hoci 50 súborov údajov o popoludňajších teplotách simulovaných z posterioru  weather_model_1  (svetlo modrá) zachytáva všeobecné centrum a rozptyl popoludňajších teplôt, ktoré sme skutočne pozorovali (tmavo modrá), žiadny z nich nezachytáva bimodalitu týchto teplôt. To znamená, že žiadny z nich neodráža skutočnosť, že existuje skupina teplôt okolo 20 stupňov a ďalšia skupina okolo 35 stupňov.
+
+```{r model1-ppcheck}
+pp_check(weather_model_1, nreps = 50) +
+  labs(title = "Posterior predictive check pre Model 1",
+       x = "Teplota o 15:00 (°C)")
+```
+
+**Poznámka:** Žiadna zo simulovaných kriviek nezachytáva bimodalitu v pozorovaných teplotách, čo naznačuje, že model možno vylepšiť.
+
+
+# Model 2: Regresia s kategoriálnym prediktorom
+
+## Prečo lokácia záleží?
+
+```{r location-density}
+ggplot(weather_WU, aes(x = temp3pm, fill = location)) +
+  geom_density(alpha = 0.6) +
+  labs(
+    title = "Rozdelenie popoludňajších teplôt podľa lokácie",
+    x = "Teplota o 15:00 (°C)",
+    y = "Hustota",
+    fill = "Lokácia"
+  )
+```
+
+V Wollongongu (juhovýchodné pobrežné mesto) býva chladnejšie ako v Uluru (púštne prostredie).
+
+## Formulácia modelu s kategoriálnym prediktorom
+
+Pre deň $i$, nech $Y_i$ označuje teplotu o 15:00 a $X_{i2}$ je indikátor pre lokáciu Wollongong:
+
+$$
+X_{i2} = \begin{cases} 
+1 & \text{ Wollongong} \\ 
+0 & \text{ inak (t.j. Uluru)}
+\end{cases}
+$$
+
+Model:
+
+$$
+\begin{equation}
+\begin{array}{lcrl}
+\text{data:} & \hspace{.05in} & Y_i|\beta_0,\beta_1,\sigma & \stackrel{ind}{\sim} N(\mu_i, \; \sigma^2) \;\; \text{ kde } \;\; \mu_i = \beta_0 + \beta_1 X_{i2}\\
+\text{priory:} & & \beta_{0c} & \sim N\left(25, 5^2\right) \\
+& & \beta_1 & \sim N\left(0, 38^2 \right) \\
+& & \sigma & \sim \text{Exp}(0.13)
+\end{array}
+\end{equation}
+$$
+
+**Interpretácia parametrov:**
+
+- **Intercept $\beta_0$**: Typická teplota o 15:00 v Uluru ($X_2 = 0$)
+- **Wollongong koeficient $\beta_1$**: Typický rozdiel v teplote o 15:00 medzi Wollongongom ($X_2 = 1$) a Uluru ($X_2 = 0$)
+- **Štandardná odchýlka $\sigma$**: Variabilita v $Y$ pri danej hodnote $X_2$
+sd(weather_WU$temp3pm)  # ≈ 15.2°C
+
+Takže: **2.5 × 15.2 ≈ 38**
+
+Prečo je to také široké?
+
+Pre kategoriálny prediktor (Uluru vs Wollongong) znamená $\beta_1$ **rozdiel v priemerných teplotách**. 
+
+- Prior $N(0, 38^2)$ hovorí: "Očakávam, že rozdiel medzi lokalitami je okolo 0 (neviem, ktorá je teplejšia), ale s 95% pravdepodobnosťou je tento rozdiel medzi **-76 a +76 stupňami**" ($0 \pm 2 \times 38$)
+
+- To je **veľmi wide (slabý) prior** - prakticky hovorí "nemám tušenia", ale aspoň to nie je úplne vague ako $N(0, 1000^2)$
+
+**Čo je $\sigma$ (sigma)?**
+
+$\sigma$ je **reziduálna štandardná odchýlka** - meria variabilitu v $Y$, ktorá **zostáva po zohľadnění prediktora**.
+
+**Rozdiel medzi $\sigma$ v priore pre $\beta_1$ vs $\sigma$ v modeli:**
+
+| Čo | Značenie | Význam |
+|----|----------|--------|
+| **Prior SD pre $\beta_1$** | 38 | Neistota o **koeficiente** (pred videním dát) |
+| **Model $\sigma$** | $\sigma \sim \text{Exp}(0.13)$ | Variabilita **pozorovaní okolo modelu** |
+
+**Príklad na Model 2:**
+temp3pm ~ location
+
+- **$\beta_1$ (koeficient)**: Rozdiel medzi Wollongong a Uluru v **priemerných** teplotách
+  - Prior: Nevieme, aký veľký je tento rozdiel → $N(0, 38^2)$
+  
+- **$\sigma$ (reziduálna SD)**: O koľko sa **jednotlivé dni** líšia od priemeru svojej lokácie
+  - Prior: $\text{Exp}(0.13)$ má strednú hodnotu $1/0.13 \approx 7.7°C$
+  - To znamená: očakávame, že jednotlivé dni sa líšia od priemeru svojej lokácie o približne 5-10 stupňov
+
+**Vizuálne:**
+```
+Uluru dni:     |---|---|---|---|---|  ← rozptyl okolo priemeru = σ
+               ↑
+           priemer Uluru (β₀)
+
+Wollongong:    |---|---|---|---|---|  ← rozptyl okolo priemeru = σ
+               ↑
+           priemer Wollongong (β₀ + β₁)
+               
+               ←----------→
+               rozdiel = β₁ (má prior SD = 38)
+               
+```
+## Simulácia posterioru
+
+```{r model2}
+weather_model_2 <- stan_glm(
+  temp3pm ~ location,
+  data = weather_WU, 
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  refresh = 0
+)
+```
+
+## MCMC diagnostika
+
+```{r model2-diagnostics}
+# Density overlays
+mcmc_dens_overlay(weather_model_2) +
+  labs(title = "Posterior density overlays pre Model 2")
+
+# Další diagnostiky (trace, acf) môžeme spustiť podobne ako pre Model 
+# MCMC diagnostics
+
+mcmc_trace(weather_model_2, size = 0.1)
+
+mcmc_acf(weather_model_2)
+
+neff_ratio(weather_model_2)
+
+rhat(weather_model_2)
+
+```
+
+## Posterior summary
+
+```{r model2-summary}
+# Tidy summary s 80% kredibilnými intervalmi
+tidy(weather_model_2, effects = c("fixed", "aux"),
+     conf.int = TRUE, conf.level = 0.80) %>%
+  select(-std.error)
+```
+
+**Interpretácia:**
+
+- Typická teplota o 15:00 je okolo 29.7°C v Uluru
+- V Wollongongu je teplota o približne 10.3°C nižšia > typická teplota v Wollongongu je okolo 19.4°C (29.7 - 10.3)
+
+## Vizualizácia posterior mediánov
+```{r model2-visualization}
+# Výpočet posterior mediánov
+uluru_median <- median(as.data.frame(weather_model_2)$`(Intercept)`)
+wollongong_median <- uluru_median + 
+  median(as.data.frame(weather_model_2)$locationWollongong)
+
+# Graf s mediánmi
+ggplot(weather_WU, aes(x = temp3pm, fill = location)) +
+  geom_density(alpha = 0.6) +
+  geom_vline(xintercept = uluru_median, 
+             color = "#F8766D", linetype = "dashed", linewidth = 1) +
+  geom_vline(xintercept = wollongong_median, 
+             color = "#00BFC4", linetype = "dashed", linewidth = 1) +
+  labs(
+    title = "Posterior mediány teplôt podľa lokácie",
+    x = "Teplota o 15:00 (°C)",
+    y = "Hustota",
+    fill = "Lokácia"
+  )
+```
+
+## Porovnanie typických teplôt v oboch lokáciách
+
+Hoci posterior mediány poskytujú rýchle porovnanie typických teplôt v našich dvoch lokalitách, neodrážajú úplný obraz ani našu posteriornú *neistotu* v tomto porovnaní. Na tento účel môžeme porovnať *celý* posterior model typickej teploty v Uluru ($\beta_0$) s tým vo Wollongongu ($\beta_0 + \beta_1$). 20 000 hodnôt Markovovho reťazca `(Intercept)` poskytuje priamu aproximáciu posterioru $\beta_0$, $\left\{\beta_0^{(1)}, \beta_0^{(2)}, \ldots, \beta_0^{(20000)}\right\}$. Čo sa týka $\beta_0 + \beta_1$, môžeme aproximovať posterior pre túto *funkciu* modelových parametrov zodpovedajúcou *funkciou* Markovových reťazcov. Konkrétne, môžeme aproximovať posterior $\beta_0 + \beta_1$ použitím reťazca vytvoreného sčítaním každého páru hodnôt reťazcov `(Intercept)` ($\beta_0$) a `locationWollongong` ($\beta_1$):
+
+$$
+\left\{\beta_0^{(1)} + \beta_1^{(1)}, \beta_0^{(2)} + \beta_1^{(2)}, \ldots, \beta_0^{(20000)} + \beta_1^{(20000)}\right\}.
+$$
+
+Výsledok nižšie naznačuje, že typická teplota vo Wollongongu je pravdepodobne medzi 17 a 22 stupňami, čo je podstatne menej ako v Uluru, kde je pravdepodobne medzi 27 a 32 stupňami.
+
+
+```{r model2-comparison}
+as.data.frame(weather_model_2) %>%
+  mutate(
+    uluru = `(Intercept)`,
+    wollongong = `(Intercept)` + locationWollongong
+  ) %>%
+  mcmc_areas(pars = c("uluru", "wollongong")) +
+  labs(title = "Posterior modely typických teplôt o 15:00",
+       x = "Teplota (°C)")
+```
+
+
+# Model 3: Regresia s dvoma prediktormi
+
+Keď vieme, že (1) popoludňajšie teploty sú pozitívne asociované s rannými teplotami a (2) bývajú nižšie vo Wollongongu než v Uluru, možno nás napadne: **Čo ak použijeme oba prediktory súčasne?**
+
+## Vizualizácia vzťahov
+
+```{r two-predictors-viz}
+ggplot(weather_WU, aes(y = temp3pm, x = temp9am, color = location)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  labs(
+    title = "Vzťah teplôt o 15:00 a 9:00 podľa lokácie",
+    x = "Teplota o 9:00 (°C)",
+    y = "Teplota o 15:00 (°C)",
+    color = "Lokácia"
+  )
+```
+
+Na oboch lokáciách vidíme lineárny pozitívny vzťah, ale pri každej rannej teplote je konzistentný rozdiel medzi lokalitami.
+
+## Formulácia modelu s dvoma prediktormi
+
+Nech $X_{i1}$ označuje teplotu o 9:00 a $X_{i2}$ lokáciu v deň $i$. Multivariabilný Bayesiánsky lineárny regresný model je:
+
+$$
+\begin{equation}
+\begin{array}{lcrl}
+\text{data:} & \hspace{.05in} & Y_i|\beta_0,\beta_1,\beta_2,\sigma & \stackrel{ind}{\sim} N(\mu_i, \; \sigma^2) \;\; \text{ kde } \;\; \mu_i = \beta_0 + \beta_1X_{i1} + \beta_2X_{i2} \\
+\text{priory:} & & \beta_{0c} & \sim N\left(25, 5^2 \right) \\
+& & \beta_1 & \sim N\left(0, 3.11^2 \right) \\
+& & \beta_2 & \sim N\left(0, 37.52^2 \right) \\
+& & \sigma & \sim \text{Exp}(0.13)
+\end{array}
+\end{equation}
+$$
+
+**Interpretácia parametrov (kľúčová zmena!):**
+
+V multivariabilnom modeli sa interpretácia koeficientov mení v závislosti od ostatných prediktorov:
+
+- **Intercept $\beta_0$**: Typická teplota o 15:00 v Uluru pri 0°C o 9:00 (keď $X_1 = X_2 = 0$)
+- **Koeficient rannej teploty $\beta_1$**: Typická zmena v teplote o 15:00 pri zvýšení rannej teploty o 1°C **v oboch lokalitách** (spoločný sklon)
+- **Koeficient lokácie $\beta_2$**: Typický rozdiel v teplote o 15:00 medzi Wollongongom a Uluru **pri rovnakej rannej teplote** $X_1$
+
+```{r model3-diagram, echo=FALSE, fig.height=4}
+# Grafická reprezentácia modelu
+tibble(
+  temp9am = seq(0, 30, by = 0.1),
+  uluru = 5 + 0.9 * temp9am,
+  wollongong = (5 - 7) + 0.9 * temp9am
+) %>%
+  pivot_longer(cols = c(uluru, wollongong), 
+               names_to = "location", values_to = "temp3pm") %>%
+  ggplot(aes(x = temp9am, y = temp3pm, color = location)) +
+  geom_line(linewidth = 1.2) +
+  annotate("segment", x = 15, xend = 15, y = 18.5, yend = 11.5,
+           arrow = arrow(length = unit(0.3, "cm")), 
+           color = "black", linewidth = 0.8) +
+  annotate("text", x = 17, y = 15, label = "β₂", size = 6) +
+  annotate("text", x = 2, y = 5, label = "β₀", size = 6, color = "#F8766D") +
+  labs(
+    title = "Grafická reprezentácia modelu 3",
+    subtitle = "Paralelné priamky s rôznymi intercepts",
+    x = "Teplota o 9:00 (°C)",
+    y = "Teplota o 15:00 (°C)",
+    color = "Lokácia"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+## Simulácia prioru
+
+Pred simuláciou posterioru sa pozrieme, aké sú naše prior očakávania:
+
+```{r model3-prior}
+set.seed(84735)
+
+weather_model_3_prior <- stan_glm(
+  temp3pm ~ temp9am + location,
+  data = weather_WU, 
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  prior_PD = TRUE,  # Simulácia iba z prioru
+  refresh = 0
+)
+```
+
+Na základe týchto predpokladov potom simulujeme a znázorňujeme 100 rôznych súborov údajov o teplote o 15:00 (obrázok 11.9). Najskôr si na ľavom grafe všimnite, že naše kombinované predpoklady vytvárajú súbory teplôt o 15:00, ktoré sa pohybujú okolo 25 stupňov (podľa $\beta_0c$), ale majú tendenciu sa pohybovať v širokom rozmedzí od približne -75 do 125 stupňov. Toto široké rozmedzie je výsledkom našich slabo informatívnych predpokladov a hoci zahŕňa nereálne teploty, je aspoň v správnom rozmedzí. Keby sme totiž použili nejasné namiesto slabo informatívnych predpokladov, naše predbežne simulované teploty by zahŕňali ešte širšie rozmedzie, povedzme v rádovo miliónoch stupňov Celzia.
+
+Po druhé, graf vpravo zobrazuje naše predchádzajúce predpoklady o vzťahu medzi teplotou o 15:00 a 9:00 na každom mieste. Podľa predchádzajúceho modelu pre sklon$\beta_1$ s centrom v 0 tieto modelové línie odrážajú konzervatívny predpoklad, že teploty o 15:00 môžu byť pozitívne alebo negatívne spojené s teplotami o 9:00 na oboch miestach. Ďalej, podľa predchádzajúceho modelu pre Wollongong koeficient $\beta_2$  s centrom v 0, absencia rozdielu medzi modelovými líniami v oboch lokalitách odráža konzervatívny predpoklad, že typická teplota o 15:00 v Wollongongu môže byť vyššia, nižšia alebo rovnaká ako v Uluru v dňoch s podobnými teplotami o 9:00. Stručne povedané, tieto predchádzajúce predpoklady odrážajú skutočnosť, že pokiaľ ide o austrálske počasie, jednoducho nevieme, čo sa deje.
+
+```{r model3-prior-viz}
+# Vizualizácia prior simulácií
+p1 <- weather_WU %>%
+  add_predicted_draws(weather_model_3_prior, n = 100) %>%
+  ggplot(aes(x = .prediction, group = .draw)) +
+  geom_density(alpha = 0.3, color = "blue") +
+  xlim(-100, 150) +
+  labs(x = "Teplota o 15:00 (°C)", y = "Hustota",
+       title = "Prior predictive distribution")
+
+p2 <- weather_WU %>%
+  add_fitted_draws(weather_model_3_prior, n = 100) %>%
+  ggplot(aes(x = temp9am, y = temp3pm, color = location)) +
+  geom_line(aes(y = .value, group = paste(location, .draw)), alpha = 0.2) +
+  labs(title = "Prior model lines", 
+       x = "Teplota o 9:00 (°C)", y = "Teplota o 15:00 (°C)")
+
+p1 + p2 + plot_layout(ncol = 2)
+```
+
+**Interpretácia prioru:**
+
+- Prior simulácie pokrývajú široký rozsah teplôt (približne -75 až 125°C)
+- Neexistuje výrazný rozdiel medzi lokalitami (prior je centrovaný okolo 0)
+- Sklony môžu byť pozitívne alebo negatívne (konzervatívny prior)
+
+## Simulácia posterioru
+
+```{r model3}
+set.seed(84735)
+
+# Update prior modelu na posterior
+weather_model_3 <- update(weather_model_3_prior, prior_PD = FALSE, refresh = 0)
+
+# Alebo priamo:
+# weather_model_3 <- stan_glm(
+#   temp3pm ~ temp9am + location,
+#   data = weather_WU, 
+#   family = gaussian,
+#   prior_intercept = normal(25, 5),
+#   prior = normal(0, 2.5, autoscale = TRUE),
+#   prior_aux = exponential(1, autoscale = TRUE),
+#   chains = 4, 
+#   iter = 5000*2, 
+#   seed = 84735,
+#   refresh = 0
+# )
+```
+
+## Posterior summary
+
+```{r model3-summary}
+# Zobrazenie prvých riadkov posterior vzoriek
+head(as.data.frame(weather_model_3), 3)
+
+# Tidy summary s 80% kredibilnými intervalmi
+tidy(weather_model_3, effects = c("fixed", "aux"),
+     conf.int = TRUE, conf.level = 0.80) %>%
+  select(term, estimate, conf.low, conf.high)
+```
+
+**Interpretácia:**
+
+- **$\beta_1$ (temp9am)**: Pri kontrole lokácie, zvýšenie rannej teploty o 1°C zvyšuje popoludňajšiu teplotu o 0.82 až 0.89°C (80% CI)
+- **$\beta_2$ (locationWollongong)**: Pri kontrole rannej teploty je popoludňajšia teplota vo Wollongongu o 6.6 až 7.51°C nižšia ako v Uluru (80% CI)
+
+## Vizualizácia posterior modelu
+
+```{r model3-posterior-viz}
+weather_WU %>%
+  add_fitted_draws(weather_model_3, n = 100) %>%
+  ggplot(aes(x = temp9am, y = temp3pm, color = location)) +
+  geom_line(aes(y = .value, group = paste(location, .draw)), 
+            alpha = 0.1) +
+  geom_point(data = weather_WU, size = 1, alpha = 0.6) +
+  labs(
+    title = "Posterior modely: 100 plausibilných vzťahov",
+    x = "Teplota o 9:00 (°C)",
+    y = "Teplota o 15:00 (°C)",
+    color = "Lokácia"
+  )
+```
+
+## Posterior predikcia
+
+Predikcia teploty o 15:00 pre deň, keď je o 9:00 práve 10°C v oboch lokalitách:
+
+```{r model3-prediction}
+set.seed(84735)
+
+# Nové dáta pre predikciu
+new_data <- data.frame(
+  temp9am = c(10, 10),
+  location = c("Uluru", "Wollongong")
+)
+
+# Posterior predictive simulácie
+temp3pm_prediction <- posterior_predict(
+  weather_model_3,
+  newdata = new_data
+)
+
+# Vizualizácia
+mcmc_areas(temp3pm_prediction, prob = 0.8) +
+  scale_y_discrete(labels = c("Uluru", "Wollongong")) +
+  labs(
+    title = "Posterior predictive models",
+    subtitle = "Predikcia teploty o 15:00 pri 10°C o 9:00",
+    x = "Teplota o 15:00 (°C)"
+  )
+```
+
+
+# Interakčné členy (voliteľné)
+
+V modeli 3 sme predpokladali, že vzťah medzi teplotou o 15:00 ($Y$) a teplotou o 9:00 ($X_1$) je **rovnaký v oboch lokalitách** ($X_2$). Vizuálne to znamenalo paralelné priamky.
+
+Niekedy však prediktory **interagujú** - ich efekt závisí od seba navzájom.
+
+## Príklad interakcie: Vlhkosť a lokácia
+
+```{r interaction-viz}
+ggplot(weather_WU, aes(y = temp3pm, x = humidity9am, color = location)) +
+  geom_point(size = 2, alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  labs(
+    title = "Interakcia: vlhkosť a lokácia",
+    subtitle = "Rôzne sklony = interakcia",
+    x = "Vlhkosť o 9:00 (%)",
+    y = "Teplota o 15:00 (°C)",
+    color = "Lokácia"
+  )
+```
+
+**Definícia interakcie:**
+
+> Dva prediktory $X_1$ a $X_2$ **interagujú**, ak asociácia medzi $X_1$ a $Y$ sa mení v závislosti od úrovne $X_2$.
+
+## Model s interakciou
+
+Nech $X_{i2}$ označuje lokáciu a $X_{i3}$ vlhkosť o 9:00. Model s interakčným členom:
+
+$$
+\begin{equation}
+\begin{array}{lcrl}
+\text{data:} & \hspace{.05in} & Y_i|\beta_0,\beta_1,\beta_2,\beta_3,\sigma & \stackrel{ind}{\sim} N(\mu_i, \; \sigma^2) \;\; \text{ kde } \; \mu_i = \beta_0 + \beta_1X_{i2} + \beta_2X_{i3} + \beta_3X_{i2}X_{i3} \\
+\text{priory:} & & \beta_{0c} & \sim N\left(25, 5^2 \right) \\
+& & \beta_1 & \sim N\left(0, 37.52^2 \right) \\
+& & \beta_2 & \sim N\left(0, 0.82^2 \right) \\
+& & \beta_3 & \sim N\left(0, 0.55^2 \right) \\
+& & \sigma & \sim \text{Exp}(0.13)
+\end{array}
+\end{equation}
+$$
+
+**Interpretácia parametrov:**
+
+Pre Uluru ($X_2 = 0$):
+$$\mu = \beta_0 + \beta_2 X_3$$
+
+Pre Wollongong ($X_2 = 1$):
+$$\mu = (\beta_0 + \beta_1) + (\beta_2 + \beta_3) X_3$$
+
+- **$\beta_0$ a $\beta_2$**: Intercept a sklon pre Uluru
+- **$\beta_1$**: Rozdiel v interceptoch medzi lokalitami
+- **$\beta_3$**: **Rozdiel v sklonoch** medzi lokalitami (interakčný koeficient!)
+
+## Simulácia interakčného modelu
+
+```{r interaction-model}
+set.seed(84735)
+
+interaction_model <- stan_glm(
+  temp3pm ~ location + humidity9am + location:humidity9am,
+  data = weather_WU, 
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  refresh = 0
+)
+```
+
+## Posterior summary
+
+```{r interaction-summary}
+# Tidy summary
+tidy(interaction_model, effects = c("fixed", "aux"))
+
+# 80% kredibilné intervaly
+posterior_interval(interaction_model, prob = 0.80,
+                   pars = "locationWollongong:humidity9am")
+```
+
+**Interpretácia:**
+
+Posterior mediány dávajú vzťahy:
+
+- **Uluru**: $\mu = 37.586 - 0.19 \times \text{humidity9am}$
+- **Wollongong**: $\mu = (37.586 - 21.879) + (-0.19 + 0.246) \times \text{humidity9am} = 15.707 + 0.056 \times \text{humidity9am}$
+
+80% kredibilný interval pre $\beta_3$ (0.197, 0.294) je celý nad 0, čo poskytuje silný dôkaz o signifikantnej interakcii.
+
+## Vizualizácia posterior modelu s interakciou
+
+```{r interaction-posterior-viz}
+weather_WU %>%
+  add_fitted_draws(interaction_model, n = 200) %>%
+  ggplot(aes(x = humidity9am, y = temp3pm, color = location)) +
+  geom_line(aes(y = .value, group = paste(location, .draw)), 
+            alpha = 0.1) +
+  labs(
+    title = "Posterior modely s interakciou",
+    subtitle = "200 plausibilných vzťahov",
+    x = "Vlhkosť o 9:00 (%)",
+    y = "Teplota o 15:00 (°C)",
+    color = "Lokácia"
+  )
+```
+
+## Kedy použiť interakčné členy?
+
+**Zvážte:**
+
+1. **Kontext**: Dáva zmysel, že vzťah medzi $Y$ a $X_1$ sa mení v závislosti od $X_2$?
+2. **Vizualizácie**: Vyzerajú sklony rôzne pre rôzne úrovne kategoriálneho prediktora?
+3. **Hypotézové testy**: Je interakčný koeficient $\beta_3$ signifikantne odlišný od 0?
+
+**Upozornenie:** Nepridávajte interakčné členy automaticky! Zbytočne komplikujú model.
+
+
+# Model 4: Viacero prediktorov (5 prediktorov)
+
+Máme k dispozícii ešte viac prediktorov: `windspeed9am` ($X_4$) a `pressure9am` ($X_5$). Skúsme zahrnúť všetkých päť prediktorov bez interakcií.
+
+## Formulácia veľkého modelu
+
+$$
+\begin{equation}
+\begin{array}{lcrl}
+\text{data:} & \hspace{.05in} & Y_i|\beta_0,\beta_1,\ldots,\beta_5,\sigma & \stackrel{ind}{\sim} N(\mu_i, \; \sigma^2) \;\; \text{ kde } \;\; \mu_i = \beta_0 + \beta_1X_{i1} + \cdots + \beta_5X_{i5} \\
+\text{priory:} & & \beta_{0c} & \sim N(25, 5^2) \\
+&& \beta_1, \ldots, \beta_5 & \sim N(0, \text{(weakly informative sd)}^2) \\
+& & \sigma & \sim \text{Exp}(0.13)
+\end{array}
+\end{equation}
+$$
+
+**Princípy interpretácie multivariabilných modelov:**
+
+V modeli s $p$ prediktormi:
+$$\mu = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \cdots + \beta_p X_p$$
+
+- **$\beta_0$**: Typická hodnota $Y$ keď sú všetky prediktory 0
+- **$\beta_i$ pre kvantitativný $X_i$**: Typická zmena v $Y$ pri zvýšení $X_i$ o 1 jednotku, **pri kontrole ostatných prediktorov**
+- **$\beta_i$ pre kategoriálny $X_i$**: Typický rozdiel v $Y$ pre úroveň $X_i$ versus referenčnú úroveň, **pri kontrole ostatných prediktorov**
+
+## Simulácia modelu 4
+
+```{r model4}
+set.seed(84735)
+
+# Použitie skratky ~ . (všetky premenné okrem response)
+weather_model_4 <- stan_glm(
+  temp3pm ~ .,  # Použije všetky prediktory v weather_WU
+  data = weather_WU, 
+  family = gaussian,
+  prior_intercept = normal(25, 5),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 5000*2, 
+  seed = 84735,
+  refresh = 0
+)
+
+# Kontrola priorov
+prior_summary(weather_model_4)
+```
+
+## MCMC diagnostika
+
+```{r model4-diagnostics}
+# Trace plots
+mcmc_trace(weather_model_4, size = 0.05) +
+  labs(title = "Trace plots pre Model 4")
+
+# Density overlays
+mcmc_dens_overlay(weather_model_4) +
+  labs(title = "Posterior densities pre Model 4")
+```
+
+## Posterior summary
+
+```{r model4-summary}
+# 95% kredibilné intervaly
+posterior_interval(weather_model_4, prob = 0.95)
+```
+
+**Analýza signifikancie prediktorov** (pri kontrole ostatných):
+
+- **Signifikantná pozitívna asociácia**: `temp9am` (CI celkom nad 0)
+- **Signifikantná negatívna asociácia**: `locationWollongong`, `humidity9am` (CI celkom pod 0)
+- **Nesignifikantné**: `windspeed9am`, `pressure9am` (CI zahŕňajú 0)
+
+
+# Evaluácia a porovnanie modelov
+
+Máme štyri modely teploty o 15:00:
+
+| Model | Formula |
+|-------|---------|
+| `weather_model_1` | `temp3pm ~ temp9am` |
+| `weather_model_2` | `temp3pm ~ location` |
+| `weather_model_3` | `temp3pm ~ temp9am + location` |
+| `weather_model_4` | `temp3pm ~ .` (všetky prediktory) |
+
+**Tri kľúčové otázky evaluácie:**
+
+1. **Ako férový je model?** → Všetky sú rovnako férové (rovnaký kontext a dáta)
+2. **Ako nesprávny je model?** → Budeme porovnávať
+3. **Ako presné sú posterior predikcie?** → Použijeme cross-validation a ELPD
+
+## Posterior predictive checks
+
+```{r all-models-ppcheck}
+pp1 <- pp_check(weather_model_1, nreps = 50) + 
+  labs(title = "Model 1: temp9am", x = "temp3pm")
+pp2 <- pp_check(weather_model_2, nreps = 50) + 
+  labs(title = "Model 2: location", x = "temp3pm")
+pp3 <- pp_check(weather_model_3, nreps = 50) + 
+  labs(title = "Model 3: temp9am + location", x = "temp3pm")
+pp4 <- pp_check(weather_model_4, nreps = 50) + 
+  labs(title = "Model 4: všetky prediktory", x = "temp3pm")
+
+(pp1 + pp2) / (pp3 + pp4)
+```
+
+**Poznámka:** Modely 3 a 4 lepšie zachytávajú bimodalitu v dátach.
+## Cross-validation porovnanie
+
+```{r cv-comparison, cache=TRUE}
+set.seed(84735)
+
+# 10-fold cross-validation pre všetky modely
+cv_1 <- prediction_summary_cv(model = weather_model_1, 
+                               data = weather_WU, k = 10)
+cv_2 <- prediction_summary_cv(model = weather_model_2, 
+                               data = weather_WU, k = 10)
+cv_3 <- prediction_summary_cv(model = weather_model_3, 
+                               data = weather_WU, k = 10)
+cv_4 <- prediction_summary_cv(model = weather_model_4, 
+                               data = weather_WU, k = 10)
+
+# Vytvorenie porovnávacej tabuľky
+cv_summary <- tibble(
+  Model = c("Model 1", "Model 2", "Model 3", "Model 4"),
+  Formula = c("temp9am", "location", "temp9am + location", "všetky"),
+  MAE = c(cv_1$cv$mae, cv_2$cv$mae, cv_3$cv$mae, cv_4$cv$mae),
+  MAE_scaled = c(cv_1$cv$mae_scaled, cv_2$cv$mae_scaled, 
+                 cv_3$cv$mae_scaled, cv_4$cv$mae_scaled),
+  within_50 = c(cv_1$cv$within_50, cv_2$cv$within_50, 
+                cv_3$cv$within_50, cv_4$cv$within_50),
+  within_95 = c(cv_1$cv$within_95, cv_2$cv$within_95, 
+                cv_3$cv$within_95, cv_4$cv$within_95)
+)
+
+cv_summary
+```
+

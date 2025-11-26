@@ -1,0 +1,517 @@
+---
+title: "Exercises 9.16 - 9.20 - Simple Normal Regression"
+subtitle: "Projekt"
+author: "Dana Kozáková TBD"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+encoding: UTF-8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 8, fig.height = 5)
+```
+
+## Úvod
+
+Cvičenia 9.16 až 9.20 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-9) 
+
+**Simple Normal Regression** - Bayesovská jednoduchá normálna regresia pre modelovanie vzťahu medzi kvantitatívnou responzovou premennou $Y$ a kvantitatívnym prediktorom $X$.
+
+```{r libraries, echo = FALSE}
+library(bayesrules)
+library(tidyverse)
+library(rstan)
+library(rstanarm)
+library(bayesplot)
+library(tidybayes)
+library(janitor)
+library(broom.mixed)
+```
+
+## Kľúčové vzorce z kapitoly 9
+
+### 9.1 Building the regression model
+
+#### 9.1.1 Data model - Štruktúra dátového modelu
+
+**Simple Normal Regression Model:**
+
+\begin{equation}
+Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N\left(\mu_i, \sigma^2\right) \;\; \text{ with } \;\; \mu_i = \beta_0 + \beta_1X_i
+\tag{9.3}
+\end{equation}
+
+kde:
+
+- $Y_i$ je hodnota responzovej premennej pre $i$-té pozorovanie
+- $X_i$ je hodnota prediktora pre $i$-té pozorovanie  
+- $\mu_i = \beta_0 + \beta_1X_i$ je stredná hodnota $Y$ pri danej hodnote $X_i$
+- $\beta_0$ je **intercept** (priesečník) - typická hodnota $Y$ pri $X = 0$
+- $\beta_1$ je **slope** (sklon) - typická zmena v $Y$ pri zvýšení $X$ o jednu jednotku
+- $\sigma$ je **štandardná odchýlka** - miera variability $Y$ okolo strednej hodnoty $\mu_i$
+
+**Interpretácia parametrov:**
+
+- **Intercept coefficient** $\beta_0$: technicky označuje typickú hodnotu responzovej premennej, keď prediktor má hodnotu 0 ($X_i = 0$). Zabezpečuje základnú úroveň modelu pozdĺž y-osi.
+- **Slope coefficient** $\beta_1$: označuje typickú zmenu v responzovej premennej pri zvýšení prediktora o jednu jednotku.
+- **Standard deviation** $\sigma$: meria variabilitu pozorovaných hodnôt okolo lokálnej strednej hodnoty $\mu_i$. Menšie $\sigma$ znamená silnejší vzťah medzi $Y$ a $X$.
+
+#### 9.1.2 Prior models - Apriórne modely
+
+**Priors pre regresné parametre:**
+
+\begin{equation}
+\begin{split}
+\beta_0 & \sim N\left(m_0, s_0^2 \right) \\
+\beta_1 & \sim N\left(m_1, s_1^2 \right) \\
+\end{split}
+\tag{9.4}
+\end{equation}
+
+\begin{equation}
+\sigma \sim \text{Exp}(l)
+\tag{9.5}
+\end{equation}
+
+Pre Exponenciálne rozdelenie platí:
+$$E(\sigma) = \frac{1}{l} \;\; \text{ a } \;\; SD(\sigma) = \frac{1}{l}$$
+
+#### 9.1.3 Complete Bayesian Model - Kompletný Bayesovský model
+
+**Bayesian Simple Linear Regression Model:**
+
+\begin{equation}
+\begin{array}{lcrl}
+\text{data:} & \hspace{.05in} & Y_i | \beta_0, \beta_1, \sigma & \stackrel{ind}{\sim} N\left(\mu_i, \sigma^2\right) \;\; \text{ with } \;\; \mu_i = \beta_0 + \beta_1X_i \\
+\text{priors:} & & \beta_0 & \sim N\left(m_0, s_0^2 \right) \\
+& & \beta_1 & \sim N\left(m_1, s_1^2 \right) \\
+& & \sigma & \sim \text{Exp}(l) \\
+\end{array}
+\tag{9.6}
+\end{equation}
+
+### 9.2 Tuning priors - Ladenie apriórnych modelov
+
+**Centered intercept** $\beta_{0c}$: Namiesto $\beta_0$ (intercept pri $X=0$) často používame centrovaný intercept $\beta_{0c}$, ktorý označuje typickú hodnotu $Y$ pri priemernej hodnote $X$.
+
+### 9.3 Posterior simulation - Posteriorna simulácia
+
+**MCMC simulácia pomocou `stan_glm()`:**
+
+```{r eval=FALSE}
+model <- stan_glm(Y ~ X, data = dataset,
+                  family = gaussian,
+                  prior_intercept = normal(m0, s0),
+                  prior = normal(m1, s1), 
+                  prior_aux = exponential(rate),
+                  chains = 4, iter = 5000*2, seed = 84735)
+```
+
+**Diagnostika MCMC:**
+
+- `neff_ratio()` - pomer efektívnej veľkosti vzorky (mala by byť > 0.1)
+- `rhat()` - R-hat hodnoty (mali by byť blízko 1.0)
+- `mcmc_trace()` - trace plots pre vizuálnu kontrolu konvergencie
+- `mcmc_dens_overlay()` - density plots pre porovnanie reťazcov
+
+### 9.4 Posterior interpretation - Interpretácia posterioru
+
+**Posteriorna sumarizácia:**
+
+```{r eval=FALSE}
+tidy(model, effects = c("fixed", "aux"), 
+     conf.int = TRUE, conf.level = 0.80)
+```
+
+**Posteriorne pravdepodobné modelové čiary:**
+
+Pre vizualizáciu posterioru sa používa funkcia `add_fitted_draws()` z balíka `tidybayes`:
+
+```{r eval=FALSE}
+data %>%
+  add_fitted_draws(model, n = 50) %>%
+  ggplot(aes(x = X, y = Y)) +
+  geom_line(aes(y = .value, group = .draw), alpha = 0.15) +
+  geom_point(data = data, size = 0.5)
+```
+
+### 9.5 Posterior prediction - Posteriorna predikcia
+
+**Dva typy intervalov:**
+
+1. **Posterior credible interval pre $\mu$**: Interval pre priemernú hodnotu $Y$ pri danom $X$
+2. **Posterior prediction interval pre $Y_{new}$**: Interval pre konkrétnu novú hodnotu $Y$ pri danom $X$
+
+Prediction interval je širší, pretože zahŕňa:
+- Variabilitu v parametroch $(\beta_0, \beta_1, \sigma)$
+- Variabilitu jednotlivých pozorovaní okolo strednej hodnoty
+
+**Simulácia posteriorne prediktívneho modelu:**
+
+```{r eval=FALSE}
+# Manuálna simulácia
+model_df <- as.data.frame(model)
+predictions <- model_df %>%
+  mutate(mu = `(Intercept)` + predictor_name * x_value,
+         y_new = rnorm(n(), mean = mu, sd = sigma))
+
+# Pomocou funkcie posterior_predict()
+predictions <- posterior_predict(model, 
+                                newdata = data.frame(predictor = x_value))
+```
+
+---
+
+## Exercise 9.16: Penguins - Prior Model
+
+> The `penguins_bayes` dataset in the bayesrules package includes data on 344 penguins. In the next exercises, you will use this data to model the length of penguin flippers in mm ($Y$) by the length of their bills in mm ($X$). We have a general sense that the average penguin has flippers that are somewhere between 150mm and 250mm long. Beyond that, we don't have a strong understanding of the relationship between flipper and bill length, and thus will otherwise utilize weakly informative priors.
+>
+> a. Simulate the Normal regression prior model of `flipper_length_mm` by `bill_length_mm` using 4 chains for 10000 iterations each. HINT: You can use the same `stan_glm()` syntax that you would use to simulate the posterior, but include `prior_PD = TRUE`.
+>
+> b. Check the `prior_summary()` and use this to write out the complete structure of your Normal regression model (9.6).
+>
+> c. Plot 100 prior plausible model lines ($\beta_0 + \beta_1 X$) and 4 datasets simulated under the priors.
+>
+> d. Summarize your weakly informative prior understanding of the relationship between flipper and bill length.
+
+### a. Apriórny model
+**Dáta v apriórnom modeli**
+
+```{r prior_model, echo=FALSE}
+data("penguins_bayes")
+
+penguins_bayes %>% select(flipper_length_mm, bill_length_mm) %>%
+  summary()
+
+cat("Pozorovani: ", nrow(penguins_bayes))
+
+```
+**Nastavenie prior modelu:** 
+
+- V zadaní je uvedené, že použijeme málo informatívne apriórne modely, keďže máme málo predpokladov o dátach. Preto nastavíme parameter `autoscale` v metóde pre parametre $\beta_1$ a $\sigma$ na `TRUE`. `Rstanarm` tak automaticky upraví smerodajnú odchýlku pre prior podľa dát.
+
+- Taktiež nemáme predpoklad o smere závislosti, či je kladná alebo záporná. Preto nastavíme strednú hodnotu prioru pre koeficient $\beta_1$ na nulu.
+
+
+**ZADANÉ HYPERPARAMETRE:**
+
+- Intercept: $m_0 = 200$, $s_0 = 25$ (z intervalu 150-250mm)
+- Slope: $m_1 = 0$, $s_1$ - weakly informative (autoscale)  
+- Sigma: $l$ - weakly informative (autoscale)
+
+**APRIÓRNY MODEL:**
+
+\begin{align}
+\text{Data: } \quad Y_i | \beta_0, \beta_1, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2)
+\quad\text{kde} \quad \mu_i = \beta_0 + \beta_1 X_i \\
+\text{Priors: } \quad \beta_{0c} &\sim N(m_0 = 200, s_0^2 = 25^2)
+\quad \text{informatívny} \\
+\beta_1 &\sim N(m_1 = 0, s_1^2) 
+\quad \text{málo informatívny} \\
+\sigma &\sim \text{Exp}(l) 
+\quad \text{málo informatívny}
+\end{align}
+
+
+```{r 9_16_a}
+
+# Zadanie: flippers are somewhere between 150mm and 250mm
+m0 <- 200 # (150 + 250) / 200 
+s0 <- 25 # (250 - m0) / 2
+# we don’t have a strong understanding of the relationship between flipper and bill length
+
+m1 <- 0
+# s1 nechame na rstanarm odhadnut
+
+penguin_prior <- stan_glm(
+  flipper_length_mm ~ bill_length_mm,
+  data = penguins_bayes,
+  family = gaussian,
+  prior_intercept = normal(m0, s0, autoscale = FALSE),  
+  prior = normal(0, 2.5, autoscale = TRUE),  # default hodnoty
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, 
+  iter = 10000, 
+  seed = 84735,
+  prior_PD = TRUE,
+  refresh = 0 # potlaci vypis MCMC na vystupe
+)
+```
+
+### b. Štruktúra modelu
+```{r 9_16_b, echo = FALSE}
+ps <- prior_summary(penguin_prior)
+ps
+
+# Extrakcia hodnôt:
+# Pre beta1
+s1_ps <- ps$prior$adjusted_scale
+
+# Pre sigma
+sigma_ps <- ps$prior_aux$adjusted_scale
+```
+
+Vidíme, že po apriórny model sa aktualizoval takto:
+
+- stredná hodnota $m_0$ a smerodajná odchýlka $s_0$ pre $\beta_0$ sa nezmenili,  N(`r m0`, `r s0`) 
+- stredná hodnota $m_1$ pre $\beta_1$ sa nezmenila, je stále `r m1`
+- smerodajná odchýlka $s_1$ pre $\beta_1$ sa prepočítala: z defaultnej hodnoty 2.5 na `r round(s1_ps, 2)`
+- parameter $\sigma$, ako vstup $1/\sigma$ pre exponenciálne rozdelenie sa prepočítal z 1 na `r round(sigma_ps, 2)`
+
+**APRIÓRNY MODEL** sa aktualizoval takto:
+
+\begin{align}
+\text{Data: } \quad Y_i | \beta_0, \beta_1, \sigma &\stackrel{ind}{\sim} N(\mu_i, \sigma^2)
+\quad\text{kde} \quad \mu_i = \beta_0 + \beta_1 X_i \\
+\text{Priors: } \quad \beta_{0c} &\sim N(m_0 = 200, s_0^2 = 25^2)\\
+\beta_1 &\sim N(m_1 = 0, s_1^2 = `r round(s1_ps, 2)`) \\
+\sigma &\sim \text{Exp}(l =  1 / \sigma = `r round(1/sigma_ps, 2)`) 
+\end{align}
+
+
+### c. Vizualizácia apriórnych modelov
+**Graf: 100 apriórnych modelových čiar**
+```{r 9_16_c_model_lines, echo = FALSE}
+# odstranenie NA hodnot
+penguins_clean <- penguins_bayes %>%
+  drop_na(bill_length_mm, flipper_length_mm)
+cat("Po odstránení NA:", nrow(penguins_clean), "pozorovaní\n\n")
+
+# add_fitted_draws() - vytvorí μᵢ = β₀ + β₁·Xᵢ
+plot_prior_lines <- penguins_clean %>%
+  add_fitted_draws(penguin_prior, n = 100) %>%
+  ggplot(aes(x = bill_length_mm, y = flipper_length_mm)) +
+  geom_line(aes(y = .value, group = .draw), alpha = 0.15, color = "steelblue") +
+  labs(title = "100 prior model lines",
+       subtitle = "Each line: mu_i = beta_0 + beta_1 * X_i",
+       x = "Bill length (mm)",
+       y = "Flipper length (mm)") +
+  theme_minimal()
+
+print(plot_prior_lines)
+```
+**Datasety:**
+```{r 9_16_c_datasets, echo = FALSE}
+set.seed(84735)
+plot_prior_data <- penguins_clean %>%
+  add_predicted_draws(penguin_prior, n = 4) %>%
+  ggplot(aes(x = bill_length_mm, y = flipper_length_mm)) +
+  geom_point(aes(y = .prediction), size = 1, alpha = 0.6, color = "steelblue") +
+  facet_wrap(~ .draw, labeller = label_both) +
+  labs(title = "4 datasets simulated from prior model",
+       x = "Bill length (mm)",
+       y = "Flipper length (mm)") +
+  theme_minimal()
+
+print(plot_prior_data)
+```
+#### d. Sumarizácia apriórneho pochopenia
+
+Prior model odráža našu neistotu pred preskúmaním dát:
+
+**Vieme:**
+- Typický tučniak má plutvy cca 200mm (150-250mm)
+
+**Nevieme:**  
+- Či existuje vzťah medzi zobákom a plutvami
+- Ak áno, či je pozitívny alebo negatívny
+- Ako silný je tento vzťah
+
+**Z grafov:**
+**Graf1: 100 modelových čiar**
+
+- 100 modelových čiar pokrýva široké spektrum možností, niektoré sú rastúce, iné klesajúce
+- vačšina čiar prechádza okolo 200 mm pri stredných hodnotách zobáka
+- široký rozpty - veľká neistota
+**Graf2: 4 simulované datasety**
+
+- 4 simulované datasety ukazujú úplne odlišné scenáre
+- graf 1: Pozitívny vzťah (dlhší zobák => dlhšie plutvy)
+- graf 2: Negatívny vzťah (dlhší zobák => kratšie plutvy)
+- graf 3: Slabý pozitívny vzťah
+- graf 4: Takmer žiadny vzťah (body roztrúsené)
+- Prior je _weakly informative_ - nezahŕňa absurdné hodnoty, 
+  ale ponecháva priestor pre rôzne vzťahy
+
+---
+https://claude.ai/chat/a5d6a0ad-8d8d-4370-96f6-1381b0c4c433
+## Exercise 9.17: Penguins - Data Exploration
+
+> a. Plot and discuss the observed relationship between `flipper_length_mm` and `bill_length_mm` among the 344 sampled penguins.
+>
+> b. Does simple Normal regression seem to be a reasonable approach to modeling this relationship? Explain.
+
+### Solution:
+
+#### a. Vizualizácia dát
+
+TU POKRACUJ
+
+#### b. Vhodnosť Normal regression
+
+TU POKRACUJ
+
+---
+
+## Exercise 9.18: Penguins - Posterior Analysis
+
+> a. Use `stan_glm()` to simulate the Normal regression posterior model. HINT: You can either do this from scratch or `update()` your prior simulation from Exercise 9.16 using `prior_PD = FALSE`.
+>
+> b. Plot 100 posterior model lines for the relationship between flipper and bill length.
+>
+> c. Provide a `tidy()` summary of your posterior model, including 90% credible intervals.
+>
+> d. Interpret the 90% posterior credible interval for the `bill_length_mm` coefficient, $\beta_1$.
+>
+> e. Do we have ample posterior evidence that penguins with longer bills tend to have longer flippers? Explain.
+
+### Solution:
+
+#### a. Posteriorna simulácia
+
+TU POKRACUJ
+
+#### b. Vizualizácia posteriorných modelových čiar
+
+TU POKRACUJ
+
+#### c. Posteriorna sumarizácia
+
+TU POKRACUJ
+
+#### d. Interpretácia $\beta_1$
+
+TU POKRACUJ
+
+#### e. Evidencia pre pozitívny vzťah
+
+TU POKRACUJ
+
+---
+
+## Exercise 9.19: Penguins - Posterior Prediction
+
+> Suppose we meet Pablo the penguin whose bill is 51mm long.
+>
+> a. Without using the `posterior_predict()` shortcut function, simulate the posterior model for the typical flipper length among penguins with 51mm bills as well as the posterior predictive model for Pablo's flipper length.
+>
+> b. Construct, discuss, and compare density plot visualizations for the two separate posterior models in part a.
+>
+> c. Calculate and interpret an 80% posterior prediction interval for Pablo's flipper length.
+>
+> d. Would the 80% credible interval for the typical flipper length among all penguins with 51mm bills be wider or narrower? Explain.
+>
+> e. Use `posterior_predict()` to confirm your results to parts b and c.
+
+### Solution:
+
+#### a. Manuálna simulácia predikcie
+
+TU POKRACUJ
+
+#### b. Porovnanie posteriorných modelov
+
+TU POKRACUJ
+
+#### c. Prediction interval pre Pabla
+
+TU POKRACUJ
+
+#### d. Porovnanie šírok intervalov
+
+TU POKRACUJ
+
+#### e. Overenie pomocou `posterior_predict()`
+
+TU POKRACUJ
+
+---
+
+## Exercise 9.20: Penguins - Body Mass Model
+
+> Based on their study of penguins in other regions, suppose that researchers are quite certain about the relationship between flipper length and body mass, prior to seeing any data: $\beta_1 \sim N(0.01, 0.002^2)$.
+>
+> a. Describe their prior understanding.
+>
+> b. Plot and discuss the observed relationship between `flipper_length_mm` and `body_mass_g` among the 344 sampled penguins.
+>
+> c. In a simple Normal regression model of flipper length $Y$ by one predictor $X$, do you think that the $\sigma$ parameter is bigger when $X$ = bill length or when $X$ = body mass? Explain your reasoning and provide some evidence from the information you already have.
+>
+> d. Use `stan_glm()` to simulate the Normal regression posterior model of flipper length by body mass using the researchers' prior for $\beta_1$ and weakly informative priors for $\beta_{0c}$ and $\sigma$. Do so with 4 chains run for 10000 iterations each.
+>
+> e. Plot the posterior model of the $\beta_1$ `body_mass_g` coefficient. Use this to describe the researchers' posterior understanding of the relationship between flippers and mass and how, if at all, this evolved from their prior understanding.
+
+### Solution:
+
+#### a. Apriórne pochopenie vzťahu
+
+TU POKRACUJ
+
+#### b. Vizualizácia vzťahu flipper length a body mass
+
+TU POKRACUJ
+
+#### c. Porovnanie $\sigma$ pre rôzne prediktory
+
+TU POKRACUJ
+
+#### d. Posteriorna simulácia s informatívnym priorom
+
+TU POKRACUJ
+
+#### e. Evolúcia pochopenia vzťahu
+
+TU POKRACUJ
+
+---
+
+## Poznámky a užitočné funkcie
+
+### Základné R funkcie pre Bayesovskú regresiu:
+
+```{r eval=FALSE}
+# Simulácia modelu
+model <- stan_glm(Y ~ X, data = data, family = gaussian,
+                  prior_intercept = normal(m0, s0),
+                  prior = normal(m1, s1),
+                  prior_aux = exponential(rate),
+                  chains = 4, iter = 10000, seed = 84735)
+
+# Diagnostika
+neff_ratio(model)
+rhat(model)
+mcmc_trace(model)
+mcmc_dens_overlay(model)
+
+# Posteriorna sumarizácia
+tidy(model, effects = c("fixed", "aux"), conf.int = TRUE, conf.level = 0.90)
+
+# Vizualizácia
+# Posteriorne modelové čiary
+data %>%
+  add_fitted_draws(model, n = 100) %>%
+  ggplot(aes(x = X, y = Y)) +
+  geom_line(aes(y = .value, group = .draw), alpha = 0.15) +
+  geom_point(data = data, size = 0.5)
+
+# Predikcia
+posterior_predict(model, newdata = data.frame(X = value))
+```
+
+### Interpretácia výsledkov:
+
+- **Credible interval**: Interval, v ktorom sa s danou pravdepodobnosťou (napr. 95%) nachádza hodnota parametra
+- **Prediction interval**: Interval pre predikciu novej hodnoty $Y$
+- **R-hat**: Hodnota blízko 1.0 indikuje konvergenciu MCMC reťazcov
+- **Effective sample size ratio**: Vyšší pomer znamená efektívnejšiu vzorku
+
+---
+
+## Referencie
+
+- Johnson, A. A., Ott, M. Q., & Dogucu, M. (2022). *Bayes Rules! An Introduction to Applied Bayesian Modeling*. Chapter 9: Simple Normal Regression. [https://www.bayesrulesbook.com/chapter-9](https://www.bayesrulesbook.com/chapter-9)
