@@ -1,0 +1,676 @@
+---
+title: "Kapitola 14: Naive Bayes Classification"
+subtitle: "Bayes Rules! An Introduction to Applied Bayesian Modeling"
+author: "Podla Johnson, Ott, Dogucu"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+# Uvod
+
+V Antarktide existuje viacero druhov tucniakov, vratane Adelie, Chinstrap a Gentoo. Pri stretnutí s jednym z tychto tucniakov mozeme klasifikovat jeho druh
+
+$$Y = \begin{cases} A & \text{ Adelie} \\ C & \text{ Chinstrap} \\ G & \text{ Gentoo} \end{cases}$$
+
+na zaklade roznych fyzickych charakteristik, napriklad ci tucniak vazi viac ako priemerna vaha 4200g:
+
+$$X_{1} = \begin{cases} 1 & \text{ nadpriemerna vaha} \\ 0 & \text{ podpriemerna vaha} \end{cases}$$
+
+ako aj merania zobaka tucniaka:
+
+$$\begin{split} 
+X_{2} & = \text{ dlzka zobaka (v mm)} \\ 
+X_{3} & = \text{ dlzka plutvy (v mm)} 
+\end{split}$$
+
+## Nacitanie dat a kniznic
+
+```{r load-packages}
+# Nacitanie potrebnych balikov
+library(bayesrules)
+library(tidyverse)
+library(e1071)
+library(janitor)
+
+# Nacitanie dat
+data(penguins_bayes)
+penguins <- penguins_bayes
+```
+
+## Prehlad dat
+
+```{r data-overview}
+# Rozdelenie tucniakov podla druhov
+penguins %>%
+  tabyl(species)
+```
+
+Medzi tymito tucniakmi je 152 Adelie, 68 Chinstrap a 124 Gentoo. Nase **apriorné predpoklady** o akomkolvek novom tucniakovi su, ze je najpravdepodobnejsie Adelie a najmenej pravdepodobne Chinstrap.
+
+## Preco potrebujeme Naive Bayes?
+
+**Otazka**: Preco ani normalny regresny model ani logisticka regresia nie su vhodne na klasifikaciu druhu tucniaka $Y$ podla jeho fyzickych charakteristik $X$?
+
+**Odpoved**:
+
+- Kedze druh $Y$ je kategoricka premenna, **normalna regresia nie je vhodna** na pochopenie jej vztahu s fyzickymi charakteristikami $X$.
+- Hoci logisticka regresia je nastroj na modelovanie kategorickych odpovedi, **je limitovana na binarne odpovedne premenne** (Bernoulliho struktura dat).
+- Nasa premenna druhu $Y$ ma **tri kategorie**.
+
+**Vyhody Naive Bayes klasifikacie** oproti Bayesovskej logistickej regresii:
+
+1. Moze klasifikovat kategoricke odpovedne premenne s **dvoma alebo viac kategoriami**
+2. Nevyzaduje vela teorie okrem **Bayesovho pravidla**
+3. Je **vypoctovo efektivna** (nevyzaduje MCMC simulaciu)
+
+---
+
+# Klasifikacia jedneho tucniaka
+
+Predpokladajme, ze antarkticky vyskumnik stretne tucniaka, ktory:
+
+- Vazi menej ako 4200g (podpriemerna vaha)
+- Ma plutvu dlhu 195mm
+- Ma zobak dlhy 50mm
+
+Naším cielom je pomoct vyskumnikovi identifikovat druh tohto tucniaka.
+
+## Jeden kategoricky prediktor
+
+Zacneme tym, ze zvazime iba informaciu o kategorickom prediktore $X_1$: tucniak vazi menej ako 4200g.
+
+### Vizualizacia
+
+```{r categorical-predictor-plot}
+ggplot(penguins %>% drop_na(above_average_weight),
+       aes(fill = above_average_weight, x = species)) +
+  geom_bar(position = "fill") +
+  labs(title = "Proporcia kazdeho druhu s nadpriemernou vahou",
+       x = "Druh",
+       y = "Proporcia",
+       fill = "Nadpriemerna vaha") +
+  scale_fill_manual(values = c("0" = "#E69F00", "1" = "#56B4E9"),
+                    labels = c("0" = "Nie", "1" = "Ano")) +
+  theme_minimal()
+```
+
+Z grafu vidime, ze tucniaky Chinstrap su **najpravdepodobnejsie s podpriemernou vahou**. Avsak Chinstrap je **najzriedkavejsi druh** v prirode!
+
+### Bayesovo pravidlo pre klasifikaciu
+
+Naive Bayes klasifikacia je priamou aplikaciou Bayesovho pravidla. Na vypocet posteriornej pravdepodobnosti, ze nas tucniak je druh $Y = y$ vzhladom na jeho stav vahy $X_1 = x_1$:
+
+$$f(y \; | \; x_1) = \frac{\text{prior} \cdot \text{likelihood}}{\text{normalizacna konstanta}} = \frac{f(y)L(y \; | \; x_1)}{f(x_1)}$$
+
+kde podla **Zakona celkovej pravdepodobnosti**:
+
+$$f(x_1) = \sum_{\text{vsetky } y'} f(y')L(y' \; | \; x_1)$$
+
+### Vypocet z dat
+
+```{r weight-table}
+# Tabulka stavu vahy podla druhu
+penguins %>%
+  select(species, above_average_weight) %>%
+  na.omit() %>%
+  tabyl(species, above_average_weight) %>%
+  adorn_totals(c("row", "col"))
+```
+
+### Priorne pravdepodobnosti
+
+Z tabulky mozeme odvodit:
+
+$$f(y = A) = \frac{151}{342}, \quad f(y = C) = \frac{68}{342}, \quad f(y = G) = \frac{123}{342}$$
+
+```{r priors}
+# Vypocet priorov
+prior_A <- 151/342
+prior_C <- 68/342
+prior_G <- 123/342
+
+cat("Prior pravdepodobnosti:\n")
+cat("P(Adelie) =", round(prior_A, 4), "\n")
+cat("P(Chinstrap) =", round(prior_C, 4), "\n")
+cat("P(Gentoo) =", round(prior_G, 4), "\n")
+```
+
+### Likelihood
+
+Likelihood ukazuje, ze podpriemerna vaha je **najcastejsia medzi Chinstrap** tucniakmi:
+
+$$\begin{split}
+L(y = A \; | \; x_1 = 0) & = \frac{126}{151} \approx 0.8344 \\
+L(y = C \; | \; x_1 = 0) & = \frac{61}{68} \approx 0.8971 \\
+L(y = G \; | \; x_1 = 0) & = \frac{6}{123} \approx 0.0488
+\end{split}$$
+
+```{r likelihoods-weight}
+# Likelihood pre podpriemernu vahu
+L_A <- 126/151
+L_C <- 61/68
+L_G <- 6/123
+
+cat("Likelihoods L(y | x1 = 0):\n")
+cat("L(Adelie | podpriemerna vaha) =", round(L_A, 4), "\n")
+cat("L(Chinstrap | podpriemerna vaha) =", round(L_C, 4), "\n")
+cat("L(Gentoo | podpriemerna vaha) =", round(L_G, 4), "\n")
+```
+
+### Marginalna pravdepodobnost
+
+$$f(x_1 = 0) = \frac{151}{342} \cdot \frac{126}{151} + \frac{68}{342} \cdot \frac{61}{68} + \frac{123}{342} \cdot \frac{6}{123} = \frac{193}{342}$$
+
+```{r marginal-prob}
+# Marginalna pravdepodobnost
+marginal <- prior_A * L_A + prior_C * L_C + prior_G * L_G
+cat("Marginalna pravdepodobnost f(x1 = 0) =", round(marginal, 4), "\n")
+```
+
+### Posteriorna pravdepodobnost
+
+$$f(y = A \; | \; x_1 = 0) = \frac{f(y = A) \cdot L(y = A \; | \; x_1 = 0)}{f(x_1 = 0)} = \frac{(151/342) \cdot (126/151)}{193/342} \approx 0.6528$$
+
+```{r posterior-weight}
+# Posteriorne pravdepodobnosti
+post_A <- (prior_A * L_A) / marginal
+post_C <- (prior_C * L_C) / marginal
+post_G <- (prior_G * L_G) / marginal
+
+cat("Posteriorne pravdepodobnosti:\n")
+cat("P(Adelie | podpriemerna vaha) =", round(post_A, 4), "\n")
+cat("P(Chinstrap | podpriemerna vaha) =", round(post_C, 4), "\n")
+cat("P(Gentoo | podpriemerna vaha) =", round(post_G, 4), "\n")
+```
+
+**Zaver**: Na zaklade informacie o podpriemernej vahe klasifikujeme tucniaka ako **Adelie**. Hoci podpriemerna vaha je relativne menej casta medzi Adelie ako medzi Chinstrap, finalna klasifikacia bola ovplyvnena tym, ze **Adelie su ovela beznejsie** v prirode.
+
+---
+
+## Jeden kvantitativny prediktor
+
+Teraz ignorujme vahu tucniaka a klasifikujme jeho druh **iba na zaklade toho, ze ma 50mm dlhy zobak**.
+
+### Vizualizacia hustot
+
+```{r bill-length-density}
+ggplot(penguins, aes(x = bill_length_mm, fill = species)) +
+  geom_density(alpha = 0.7) +
+  geom_vline(xintercept = 50, linetype = "dashed", size = 1) +
+  labs(title = "Hustotne grafy dlzky zobaka podla druhu",
+       x = "Dlzka zobaka (mm)",
+       y = "Hustota",
+       fill = "Druh") +
+  theme_minimal()
+```
+
+Z grafu vidime, ze 50mm dlhy zobak by bol **extremne dlhy pre Adelie**. Medzi Chinstrap a Gentoo je rozdiel menej dramaticky, ale Chinstrap zobaky maju tendenciu byt o nieco dlhsie.
+
+### Normalita ako "naivny" predpoklad
+
+Tu prichadza **"naivna" cast** Naive Bayes klasifikacie. Metoda typicky predpoklada, ze akykolvek kvantitativny prediktor je **podmienene normalny**:
+
+$$\begin{split}
+X_2 \; | \; (Y = A) & \sim N(\mu_A, \sigma_A^2) \\
+X_2 \; | \; (Y = C) & \sim N(\mu_C, \sigma_C^2) \\
+X_2 \; | \; (Y = G) & \sim N(\mu_G, \sigma_G^2)
+\end{split}$$
+
+### Odhad parametrov
+
+```{r bill-params}
+# Vypocet vyberovych priemerov a standardnych odchylok pre kazdy druh
+bill_stats <- penguins %>%
+  group_by(species) %>%
+  summarize(mean = mean(bill_length_mm, na.rm = TRUE),
+            sd = sd(bill_length_mm, na.rm = TRUE))
+
+bill_stats
+```
+
+### Normalne modely pre kazdy druh
+
+```{r normal-models-plot}
+ggplot(penguins, aes(x = bill_length_mm, color = species)) +
+  stat_function(fun = dnorm, args = list(mean = 38.8, sd = 2.66),
+                aes(color = "Adelie"), size = 1) +
+  stat_function(fun = dnorm, args = list(mean = 48.8, sd = 3.34),
+                aes(color = "Chinstrap"), size = 1) +
+  stat_function(fun = dnorm, args = list(mean = 47.5, sd = 3.08),
+                aes(color = "Gentoo"), size = 1) +
+  geom_vline(xintercept = 50, linetype = "dashed", size = 1) +
+  labs(title = "Normalne rozdelenia naladene na pozorovane statistiky",
+       x = "Dlzka zobaka (mm)",
+       y = "Hustota",
+       color = "Druh") +
+  xlim(30, 60) +
+  theme_minimal()
+```
+
+### Vypocet likelihood pomocou normalneho rozdelenia
+
+Likelihood odpovedaju **vyskam normalnych kriviek** pri dlzke zobaka 50mm:
+
+```{r bill-likelihoods}
+# Likelihood pre 50mm zobak
+L_A_bill <- dnorm(50, mean = 38.8, sd = 2.66)
+L_C_bill <- dnorm(50, mean = 48.8, sd = 3.34)
+L_G_bill <- dnorm(50, mean = 47.5, sd = 3.08)
+
+cat("Likelihoods L(y | x2 = 50):\n")
+cat("L(Adelie | zobak 50mm) =", format(L_A_bill, scientific = TRUE), "\n")
+cat("L(Chinstrap | zobak 50mm) =", round(L_C_bill, 4), "\n")
+cat("L(Gentoo | zobak 50mm) =", round(L_G_bill, 4), "\n")
+```
+
+### Bayesovo pravidlo
+
+$$f(y \; | \; x_2) = \frac{f(y)L(y \; | \; x_2)}{f(x_2)} = \frac{f(y)L(y \; | \; x_2)}{\sum_{\text{vsetky } y'} f(y')L(y' \; | \; x_2)}$$
+
+```{r posterior-bill}
+# Marginalna pravdepodobnost
+marginal_bill <- prior_A * L_A_bill + prior_C * L_C_bill + prior_G * L_G_bill
+
+# Posteriorne pravdepodobnosti
+post_A_bill <- (prior_A * L_A_bill) / marginal_bill
+post_C_bill <- (prior_C * L_C_bill) / marginal_bill
+post_G_bill <- (prior_G * L_G_bill) / marginal_bill
+
+cat("Posteriorne pravdepodobnosti (na zaklade dlzky zobaka):\n")
+cat("P(Adelie | zobak 50mm) =", round(post_A_bill, 4), "\n")
+cat("P(Chinstrap | zobak 50mm) =", round(post_C_bill, 4), "\n")
+cat("P(Gentoo | zobak 50mm) =", round(post_G_bill, 4), "\n")
+```
+
+**Zaver**: Na zaklade dlzky zobaka klasifikujeme tucniaka ako **Gentoo** (najvyssia posteriorna pravdepodobnost). Hoci 50mm dlhy zobak je relativne menej bezny medzi Gentoo ako medzi Chinstrap, finalna klasifikacia bola ovplyvnena tym, ze **Gentoo su ovela beznejsie** v prirode ako Chinstrap.
+
+---
+
+## Dva prediktory
+
+Mame dve klasifikacie ktore si **odporuju**:
+
+- Na zaklade vahy: **Adelie**
+- Na zaklade dlzky zobaka: **Gentoo**
+
+Tato nezhoda naznacuje, ze existuje priestor na zlepsenie. Namiesto spolahnutia sa na jeden prediktor mozeme **kombinovat viacere prediktory**.
+
+### Vizualizacia dvoch prediktorov osobitne
+
+```{r two-predictors-separate}
+library(patchwork)
+
+p1 <- ggplot(penguins, aes(x = bill_length_mm, fill = species)) +
+  geom_density(alpha = 0.6) +
+  labs(title = "Dlzka zobaka", x = "Dlzka zobaka (mm)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(penguins, aes(x = flipper_length_mm, fill = species)) +
+  geom_density(alpha = 0.6) +
+  labs(title = "Dlzka plutvy", x = "Dlzka plutvy (mm)") +
+  theme_minimal()
+
+p1 + p2
+```
+
+### Kombinacia prediktorov
+
+Ked skombinujeme informacie o dlzke zobaka a plutvy, druhy su **dobre rozlisitelne**:
+
+```{r two-predictors-combined}
+ggplot(penguins, aes(x = flipper_length_mm, y = bill_length_mm, color = species)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_vline(xintercept = 195, linetype = "dashed") +
+  geom_hline(yintercept = 50, linetype = "dashed") +
+  labs(title = "Dlzka zobaka vs. dlzka plutvy",
+       subtitle = "Priesecnik = nas tucniak (zobak 50mm, plutva 195mm)",
+       x = "Dlzka plutvy (mm)",
+       y = "Dlzka zobaka (mm)",
+       color = "Druh") +
+  theme_minimal()
+```
+
+Nas tucniak s 50mm zobákom a 195mm plutvou lezi **jasne medzi pozorovaniami Chinstrap**!
+
+### Bayesovo pravidlo s dvoma prediktormi
+
+$$f(y \; | \; x_2, x_3) = \frac{f(y) L(y \; | \; x_2, x_3)}{\sum_{\text{vsetky } y'} f(y')L(y' \; | \; x_2, x_3)}$$
+
+### Predpoklad podmienene nezavislosti
+
+Tu prichadza dalsi **"naivny" predpoklad**. Naive Bayes klasifikacia predpoklada, ze prediktory su **podmienene nezavisle**:
+
+$$L(y \; | \; x_2, x_3) = f(x_2, x_3 \; | \; y) = f(x_2 \; | \; y) \cdot f(x_3 \; | \; y)$$
+
+V slovach: **v ramci kazdeho druhu predpokladame, ze dlzka zobaka tucniaka nema ziadny vztah k dlzke jeho plutvy**.
+
+Matematicky a vypoctovo tento predpoklad robi Naive Bayes algoritmus **efektivnym a zvladnutelnym**. Avsak moze ho aj **pokazit** - v skutocnosti su tieto premenne pozitivne korelovanene v ramci kazdeho druhu.
+
+### Normalne modely pre dlzku plutvy
+
+```{r flipper-params}
+# Vypocet statistik pre dlzku plutvy
+flipper_stats <- penguins %>%
+  group_by(species) %>%
+  summarize(mean = mean(flipper_length_mm, na.rm = TRUE),
+            sd = sd(flipper_length_mm, na.rm = TRUE))
+
+flipper_stats
+```
+
+### Vypocet likelihoodov
+
+```{r likelihoods-flipper}
+# Likelihood pre dlzku plutvy 195mm
+L_A_flipper <- dnorm(195, mean = 190, sd = 6.54)
+L_C_flipper <- dnorm(195, mean = 196, sd = 7.13)
+L_G_flipper <- dnorm(195, mean = 217, sd = 6.48)
+
+cat("Likelihoods L(y | x3 = 195):\n")
+cat("L(Adelie | plutva 195mm) =", round(L_A_flipper, 4), "\n")
+cat("L(Chinstrap | plutva 195mm) =", round(L_C_flipper, 4), "\n")
+cat("L(Gentoo | plutva 195mm) =", round(L_G_flipper, 6), "\n")
+```
+
+### Kombinovane likelihoods
+
+$$L(y \; | \; x_2 = 50, x_3 = 195) = L(y \; | \; x_2 = 50) \cdot L(y \; | \; x_3 = 195)$$
+
+```{r combined-likelihoods}
+# Kombinovane likelihoods (predpoklad nezavislosti)
+L_A_comb <- L_A_bill * L_A_flipper
+L_C_comb <- L_C_bill * L_C_flipper
+L_G_comb <- L_G_bill * L_G_flipper
+
+cat("Kombinovane likelihoods:\n")
+cat("L(Adelie | zobak 50mm, plutva 195mm) =", format(L_A_comb, scientific = TRUE), "\n")
+cat("L(Chinstrap | zobak 50mm, plutva 195mm) =", format(L_C_comb, scientific = TRUE), "\n")
+cat("L(Gentoo | zobak 50mm, plutva 195mm) =", format(L_G_comb, scientific = TRUE), "\n")
+```
+
+### Finalna posteriorna pravdepodobnost
+
+```{r final-posterior}
+# Vazenene likelihoods
+weighted_A <- prior_A * L_A_comb
+weighted_C <- prior_C * L_C_comb
+weighted_G <- prior_G * L_G_comb
+
+# Marginalna pravdepodobnost
+marginal_comb <- weighted_A + weighted_C + weighted_G
+
+# Posteriorne pravdepodobnosti
+post_A_comb <- weighted_A / marginal_comb
+post_C_comb <- weighted_C / marginal_comb
+post_G_comb <- weighted_G / marginal_comb
+
+cat("Finalne posteriorne pravdepodobnosti:\n")
+cat("P(Adelie | zobak 50mm, plutva 195mm) =", round(post_A_comb, 4), "\n")
+cat("P(Chinstrap | zobak 50mm, plutva 195mm) =", round(post_C_comb, 4), "\n")
+cat("P(Gentoo | zobak 50mm, plutva 195mm) =", round(post_G_comb, 4), "\n")
+```
+
+**Zaver**: Nas tucniak je **takmer urcite Chinstrap** (posteriorna pravdepodobnost > 99%). Hoci sme neprisli k tomuto zaveru pouzitim ziadnej fyzickej charakteristiky samostatne, **spolocne maľuju jasny obraz**.
+
+---
+
+# Formalna definicia Naive Bayes klasifikacie
+
+Nech $Y$ oznacuje kategoricku odpovednu premennu s dvoma alebo viac kategoriami a $(X_1, X_2, \dots, X_p)$ je mnozina $p$ moznych prediktorov $Y$. Potom **posteriorna pravdepodobnost**, ze novy pripad s pozorovanymi prediktormi $(X_1, X_2, \ldots, X_p) = (x_1, x_2, \ldots, x_p)$ patri do triedy $Y = y$ je:
+
+$$\boxed{f(y | x_1, x_2, \ldots, x_p) = \frac{f(y)L(y \; | \; x_1, x_2, \ldots, x_p)}{\sum_{\text{vsetky } y' }f(y')L(y' \; | \; x_1, x_2, \ldots, x_p)}}$$
+
+## Naivne predpoklady
+
+Naive Bayes klasifikacia robi nasledujuce **naivne predpoklady** o likelihood funkcii $Y$:
+
+### 1. Podmienena nezavislost prediktorov
+
+Prediktory $X_i$ su podmienene nezavisle:
+
+$$L(y \; | \; x_1, x_2, \ldots, x_p) = \prod_{i=1}^p f(x_i \; | \; y)$$
+
+### 2. Kategoricke prediktory
+
+Pre kategoricke prediktory $X_i$ je podmienena pmf:
+
+$$f(x_i \; | \; y) = P(X_i = x_i \; | \; Y = y)$$
+
+odhadnuta **vyberovou proporciou** pozorovanich pripadov $Y = y$ pre ktore $X_i = x_i$.
+
+### 3. Kvantitativne prediktory
+
+Pre kvantitativne prediktory $X_i$ je podmienena pdf definovana **normalnym modelom**:
+
+$$X_i | (Y = y) \sim N(\mu_{iy}, \sigma^2_{iy})$$
+
+V ramci kazdej kategorie $Y = y$ predpokladame, ze $X_i$ je normalne rozdelene okolo nejakej strednej hodnoty $\mu_{iy}$ so standardnou odchylkou $\sigma_{iy}$. Tieto parametre odhadujeme **vyberovym priemerom a standardnou odchylkou**.
+
+---
+
+# Implementacia a hodnotenie Naive Bayes klasifikacie
+
+## Pouzitie funkcie naiveBayes()
+
+V R pouzivame funkciu `naiveBayes()` z balika `e1071`:
+
+```{r naive-bayes-models}
+# Model 1: iba dlzka zobaka
+naive_model_1 <- naiveBayes(species ~ bill_length_mm, data = penguins)
+
+# Model 2: dlzka zobaka + dlzka plutvy
+naive_model_2 <- naiveBayes(species ~ bill_length_mm + flipper_length_mm,
+                            data = penguins)
+```
+
+## Klasifikacia naseho tucniaka
+
+```{r our-penguin}
+# Definicia naseho tucniaka
+our_penguin <- data.frame(
+  bill_length_mm = 50,
+  flipper_length_mm = 195
+)
+
+our_penguin
+```
+
+### Model 1 (iba dlzka zobaka)
+
+```{r predict-model1}
+# Posteriorne pravdepodobnosti
+predict(naive_model_1, newdata = our_penguin, type = "raw")
+
+# Klasifikacia
+predict(naive_model_1, newdata = our_penguin)
+```
+
+**Vysledok**: Na zaklade dlzky zobaka je nas tucniak klasifikovany ako **Gentoo**.
+
+### Model 2 (dlzka zobaka + dlzka plutvy)
+
+```{r predict-model2}
+# Posteriorne pravdepodobnosti
+predict(naive_model_2, newdata = our_penguin, type = "raw")
+
+# Klasifikacia
+predict(naive_model_2, newdata = our_penguin)
+```
+
+**Vysledok**: Ked vezmeme do uvahy obe merania, nas tucniak je klasifikovany ako **Chinstrap** (zhodne s nasim manualnym vypoctom!).
+
+---
+
+## Hodnotenie presnosti klasifikacie
+
+### Pridanie klasifikacii k datam
+
+```{r add-classifications}
+penguins <- penguins %>%
+  mutate(class_1 = predict(naive_model_1, newdata = .),
+         class_2 = predict(naive_model_2, newdata = .))
+```
+
+### Nahodna vzorka tucniakov
+
+```{r sample-penguins}
+set.seed(84735)
+penguins %>%
+  sample_n(4) %>%
+  select(bill_length_mm, flipper_length_mm, species, class_1, class_2) %>%
+  rename(bill = bill_length_mm, flipper = flipper_length_mm)
+```
+
+### Confusion Matrix pre Model 1
+
+```{r confusion-matrix-1}
+penguins %>%
+  tabyl(species, class_1) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 2) %>%
+  adorn_ns()
+```
+
+### Confusion Matrix pre Model 2
+
+```{r confusion-matrix-2}
+penguins %>%
+  tabyl(species, class_2) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 2) %>%
+  adorn_ns()
+```
+
+### Porovnanie modelov
+
+```{r model-comparison}
+# Celkova presnost Model 1
+correct_1 <- 145 + 6 + 110
+total <- nrow(penguins %>% drop_na(class_1))
+accuracy_1 <- correct_1 / total
+
+# Celkova presnost Model 2
+correct_2 <- 146 + 59 + 122
+accuracy_2 <- correct_2 / total
+
+cat("Celkova presnost:\n")
+cat("Model 1 (iba zobak):", round(accuracy_1 * 100, 1), "%\n")
+cat("Model 2 (zobak + plutva):", round(accuracy_2 * 100, 1), "%\n")
+```
+
+**Hlavne zistenia**:
+
+1. **Model 2 je lepsi celkovo** (95% vs 76% presnost)
+2. **Najvacsi rozdiel je v klasifikacii Chinstrap**: Model 1 spravne klasifikuje iba 9% Chinstrap (85% je nespravne klasifikovanych ako Gentoo), zatial co Model 2 spravne klasifikuje 87%
+3. Model 2 ma vyssiu presnost pre **vsetky tri druhy**
+
+---
+
+## Krizova validacia
+
+Pre lepsiu predstavu o tom, ako dobre nase Naive Bayes modely klasifikuju **novych tucniakov** (nie iba tych v nasej vzorke), pouzijeme **10-fold krizovu validaciu**:
+
+```{r cross-validation}
+set.seed(84735)
+cv_model_2 <- naive_classification_summary_cv(
+  model = naive_model_2, data = penguins, y = "species", k = 10)
+
+# Krizovo validovana confusion matrix
+cv_model_2$cv
+```
+
+Miera presnosti v krizovo validovanej confusion matrix su **porovnatelne** s nekrizovo validovanou. To znamena, ze nas Naive Bayes model **funguje takmer rovnako dobre na novych tucniakoch** ako na povodnej vzorke.
+
+---
+
+# Naive Bayes vs Logisticka regresia
+
+## Kedy pouzit Naive Bayes
+
+V scenaroch s **binarnou kategorickou odpovednou premennou** $Y$ su oba pristupy zivotaschopne. Otazkou je, ktory nastroj pouzit.
+
+## Vyhody a nevyhody
+
+| Aspekt | Naive Bayes | Logisticka regresia |
+|--------|-------------|---------------------|
+| **Pocet kategorii** | 2+ kategorii | Iba 2 kategorie (standardne) |
+| **Vypoctova efektivnost** | Velmi efektivny | Vyzaduje MCMC |
+| **Predpoklady** | Rigidne (normalita, nezavislost) | Flexibilnejsie |
+| **Interpretovatelnost** | Ziadne regresne koeficienty | Regresne koeficienty $\beta_i$ |
+| **Vztahy medzi premennymi** | Nezobrazuje | Jasne ukazuje |
+
+## Kedy ktory pouzit?
+
+- **Pouzite logisticku regresiu** ak:
+  - Rigidne predpoklady Naive Bayes su nevhodne
+  - Zaujimaju vas specificke spojenia medzi $Y$ a $X$
+  
+- **Pouzite Naive Bayes** ak:
+  - Potrebujete rychlu klasifikaciu
+  - Nestarate sa o interpretaciu koeficientov
+  - Mate viac ako 2 kategorie
+
+**Najlepsia rada**: Skuste oba! Ucte sa od oboch nastrojov.
+
+---
+
+# Zhrnutie kapitoly
+
+## Hlavne body
+
+1. **Naive Bayes klasifikacia** je uzitocny nastroj na klasifikaciu kategorickych odpovednych premennych $Y$ s dvoma alebo viac kategoriami.
+
+2. **Bayesovo pravidlo** je jadrom metody:
+
+$$f(y | x_1, x_2, \ldots, x_p) = \frac{f(y)L(y \; | \; x_1, x_2, \ldots, x_p)}{\sum_{\text{vsetky } y' }f(y')L(y' \; | \; x_1, x_2, \ldots, x_p)}$$
+
+3. **Naivne predpoklady**:
+   - Prediktory $X_i$ su **podmienene nezavisle**
+   - Hodnoty kvantitativnych prediktorov sa menia **normalne** v ramci kazdej kategorie $Y = y$
+
+4. **Ked su predpoklady splnene**: Tieto zjednodusujuce predpoklady robia Naive Bayes model vypoctovo efektivnym a jednoducho aplikovatelnym.
+
+5. **Ked su predpoklady porusene** (co je bezne): Naive Bayes model moze produkovat **zavadzajuce klasifikacie**.
+
+## Klucove vzorce
+
+| Koncept | Vzorec |
+|---------|--------|
+| Posteriorna pravdepodobnost | $f(y \| x) = \frac{f(y)L(y\|x)}{f(x)}$ |
+| Podmienena nezavislost | $L(y \| x_1, \ldots, x_p) = \prod_{i=1}^p f(x_i \| y)$ |
+| Normalny model | $X_i \| (Y=y) \sim N(\mu_{iy}, \sigma^2_{iy})$ |
+
+## R funkcie
+
+| Funkcia | Pouzitie |
+|---------|----------|
+| `naiveBayes()` | Vytvorenie Naive Bayes modelu |
+| `predict()` | Klasifikacia novych pripadov |
+| `naive_classification_summary_cv()` | Krizova validacia |
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
