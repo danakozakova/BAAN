@@ -151,6 +151,7 @@ cat("P(Chinstrap) =", round(prior_C, 4), "\n")
 cat("P(Gentoo) =", round(prior_G, 4), "\n")
 ```
 Z tabulky mozeme odvodit:
+
 $f(y = A) = \frac{151}{342}$ = `r round(prior_A, 4)`
 
 $$f(y = C) = \frac{68}{342}, \quad f(y = G) = \frac{123}{342}$$
