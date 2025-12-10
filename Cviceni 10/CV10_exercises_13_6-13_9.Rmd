@@ -1,0 +1,708 @@
+---
+title: "Kapitola 13: Cvičenia 13.6 - 13.9"
+subtitle: "Bayesovská logistická regresia - Hotel Bookings"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: false
+    theme: united
+    highlight: tango
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+# Načítanie balíkov
+
+```{r packages, echo=FALSE}
+# Clear variables and console
+rm(list = ls())
+cat("\014")
+
+# Load packages
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(tidybayes)
+library(broom.mixed)
+library(janitor)
+library(patchwork)
+```
+
+### Interpretácia koeficientov
+
+**Intercept $\beta_0$:**
+
+- Na log(odds) škále: $\beta_0$ je log(odds) zrušenia pri všetkých $X_k = 0$
+- Na odds škále: $e^{\beta_0}$ sú odds zrušenia pri všetkých $X_k = 0$
+
+**Sklon $\beta_k$ (k = 1, 2, 3, 4):**
+
+- Na log(odds) škále: $\beta_k$ je zmena v log(odds) pri zvýšení $X_k$ o 1
+- Na odds škále: $e^{\beta_k}$ je **multiplikatívna zmena** v odds pri zvýšení $X_k$ o 1
+
+$$e^{\beta_k} = \frac{\text{odds}_{x+1}}{\text{odds}_x}$$
+
+**Príklad:** Ak $\beta_2 = 0.5$, potom:
+- Log(odds) sa zvýšia o 0.5
+- Odds sa vynásobia $e^{0.5} = 1.65$ (zvýšia sa o 65%)
+
+### Apriorné rozdelenia
+
+$$\begin{aligned}
+\beta_{0c} &\sim N(-1.4, 0.7^2) \\
+\beta_k &\sim N(0, 1^2) \text{ s autoscale=TRUE, } k = 1, 2, 3, 4
+\end{aligned}$$
+
+
+# Zadanie: Hotel Bookings
+
+Analyzuj údaje o hotelových rezerváciách v datasete `hotel_bookings` z balíka `bayesrules`. Dáta obsahujú náhodný výber rezervácií zhromaždených Antoniom, de Almeidou a Nunesom (2019).
+
+## Premenné
+
+| Premenná | Označenie | Význam |
+|----------|---------|-----------|
+| `is_canceled` | $Y$ | či bola rezervácia zrušená |
+| `lead_time` | $X_1$ | počet dní medzi rezerváciou a plánovaným príchodom |
+| `previous_cancellations` | $X_2$ | počet predchádzajúcich zrušení hosťa |
+| `is_repeated_guest` | $X_3$ | či je hosť opakujúci sa zákazník hotela |
+| `average_daily_rate` | $X_4$ | priemerná denná cena hotela |
+
+
+# Cvičenie 13.6: Príprava dát a explorácia
+```{r preparation}
+# load data 
+data(hotel_bookings)
+
+# vyber len vhodne stlpce
+hotel <- hotel_bookings %>% 
+  select(is_canceled, lead_time, previous_cancellations,
+         is_repeated_guest, average_daily_rate)
+```
+
+## Úloha 13.6a)
+**a)** Aký podiel rezervácií v datasete bol zrušený?
+```{r 13-6a}
+hotel %>% tabyl(is_canceled)
+```
+
+##  Úloha 13.6b)
+**b)** Vytvor a diskutuj grafy `is_canceled` verzus každý z prediktorov.
+
+```{r 13-6b}
+# visualisation
+# jitter pre lead_time
+plt_j <- ggplot(hotel, aes(x = lead_time, y = is_canceled)) + 
+  geom_jitter(size = 0.2) + 
+  labs(title = 'Relation: is_canceled(0/1) vs lead_time')
+# boxplot pre lead_time
+plt_b <- ggplot(hotel, aes(x = factor(is_canceled), y = lead_time)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.6) +
+  labs(title = "Relation: is_canceled(0/1) vs lead_time") +
+  theme_bw()
+
+# jitter pre previous cancellations
+ppc_j <- ggplot(hotel, aes(x = previous_cancellations, y = is_canceled)) + 
+  geom_jitter(size = 0.2) + 
+  labs(title = 'Relation: is_canceled(0/1) vs previous_cancellations')
+# boxplot pre previous cancellations
+ppc_b <- ggplot(hotel, aes(x = factor(is_canceled), y = previous_cancellations)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.6) +
+  labs(title = "Relation: is_canceled(0/1) and previous_cancellations") +
+  theme_bw()
+
+# jitter pre repeated_guest
+prq_j <- ggplot(hotel, aes(x = is_repeated_guest, y = is_canceled)) + 
+  geom_jitter(size = 0.2) + 
+  labs(title = 'Relation: is_canceled(0/1) and is_repeated_guest')
+# bar pre repeated_quest
+prq_b <- hotel %>% 
+  group_by(is_repeated_guest, is_canceled) %>%
+  summarise(n = n()) %>%
+  group_by(is_repeated_guest) %>%
+  mutate(prop = n/sum(n)) %>% 
+  filter(is_canceled == 1) %>%
+  ggplot(aes(x = factor(is_repeated_guest), y = prop)) +
+  geom_col(fill = "darkorange", alpha = 0.7) +
+  labs(x = "repeated_guest", y = "is_cancelled",
+       title = "Relation: is_canceled(0/1) and is_repeated_guest") +
+  theme_minimal()
+
+# jitter pre average_daily_rate
+padr_j <- ggplot(hotel, aes(x = average_daily_rate, y = is_canceled)) + 
+  geom_jitter(size = 0.2) + 
+  labs(title = 'Relation: is_canceled(0/1) and average_daily_rate')
+# boxplot pre average_daily_rate
+padr_b <- ggplot(hotel, aes(x = factor(is_canceled), y = average_daily_rate)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.6) +
+  labs(title = "Relation: is_canceled(0/1) and average_daily_rate") +
+  theme_bw()
+
+(plt_j + plt_b) / (ppc_j + ppc_b) 
+(prq_j + prq_b) / (padr_j + padr_b)
+
+```
+
+##  Úloha 13.6c)
+**c)** Zapíš formálnou matematickou notáciou vhodný Bayesovský regresný model $Y$ pomocou prediktorov $(X_1, X_2, X_3, X_4)$.
+
+**Dátový model**
+
+**Bernoulliho rozdelenie pre binárnu premennú:**
+$$Y_i | \beta_0, \beta_1, \beta_2, \beta_3, \beta_4 \sim \text{Bern}(\pi_i)$$
+
+* kde $Y_i \in \{0, 1\}$ (zrušené / nezrušené) 
+* $\pi_i$ je pravdepodobnosť zrušenia rezervácie $i$.
+
+**Logit linková funkcia**
+
+**Log(odds) škála:**
+$$\log\left(\frac{\pi_i}{1-\pi_i}\right) = \beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \beta_3 X_{i3} + \beta_4 X_{i4}$$
+
+- **Ľavá strana:** log(odds) zrušenia rezervácie
+- **Pravá strana:** lineárna kombinácia prediktorov
+
+**Transformácie**
+
+**Odds škála:**
+$$\frac{\pi_i}{1-\pi_i} = e^{\beta_0 + \beta_1 X_{i1} + \beta_2 X_{i2} + \beta_3 X_{i3} + \beta_4 X_{i4}}$$
+
+**Pravdepodobnostná škála:**
+$$\pi_i = \frac{e^{\beta_0 + \sum_{k=1}^{4} \beta_k X_{ik}}}{1 + e^{\beta_0 + \sum_{k=1}^{4} \beta_k X_{ik}}}$$
+
+##  Úloha 13.6d)
+**d)** Vysvetli tvoj výber štruktúry dátového modelu.
+
+$Y_i$ je diskrétna premenná, ktorá može nadobúdať len hodnoty 0 alebo 1, najvhodnejší je **Bernoulliho model**
+
+# Cvičenie 13.7: Simulácia modelu (Hotel bookings: simulation)
+
+## Úloha 13.7a)
+
+**a)** Simuluj posteriorný model regresných parametrov $(\beta_0, \beta_1, \ldots, \beta_4)$. Vytvor trace plots, density plots a `pp_check()` výstupu z reťazcov.
+
+
+```{r 13-7a}
+# Run a prior simulation
+hotel_model_1 <- stan_glm(
+  is_canceled ~ lead_time + previous_cancellations + 
+                is_repeated_guest + average_daily_rate,
+  data = hotel, 
+  family = binomial,
+  prior_intercept = normal(-1.4, 0.7),
+  prior = normal(0, 1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, 
+  refresh = 0
+)
+```
+### Diagnostické grafy
+
+**Trace plot (`mcmc_trace`):**
+- Kontroluje konvergenciu reťazcov
+- Dobré: "chlpaté" krivky, všetky reťazce sa prekrývajú
+- Zlé: trendy, uviaznuté reťazce, rôzne úrovne
+
+**Density overlay (`mcmc_dens_overlay`):**
+- Kontroluje, či posteriorné hustoty z rôznych reťazcov sú podobné
+- Dobré: hustoty sa prekrývajú
+- Zlé: rozdielne tvary alebo polohy
+
+**Autocorrelation (`mcmc_acf`):**
+- Kontroluje autokoreláciu v reťazcoch
+- Dobré: rýchlo klesá k nule
+- Zlé: vysoká autokorelácia na väčších lagoch
+
+```{r 13-7a-grafy}
+# MCMC trace, density, & autocorrelation plots
+hotel_model_1 |> mcmc_trace()
+hotel_model_1 |> mcmc_dens_overlay()
+hotel_model_1 |> mcmc_acf()
+
+hotel_model_1 |> pp_check()
+```
+
+### Numerické diagnostiky
+
+**Effective sample size ratio (`neff_ratio`):**
+- Pomer efektívnej veľkosti vzorky k skutočnej
+- Dobré: > 0.1, ideálne blízko 1
+- Zlé: < 0.1
+
+**R-hat (`rhat`):**
+- Meria konvergenciu medzi reťazcami
+- Dobré: ≈ 1.00 (< 1.01)
+- Zlé: > 1.01
+
+```{r 13-7-numer}
+neff_ratio(hotel_model_1)
+rhat(hotel_model_1)
+```
+### Posterior predictive check
+```{r}
+# posterior predictive check
+pp_check(hotel_model_1)
+```
+
+
+**Účel:**
+- Overuje, či simulované dáta z modelu sú podobné skutočným dátam
+- Kontroluje predpoklady modelu
+
+**Interpretácia:**
+- Dobré: simulované hodnoty pokrývajú pozorovanú hodnotu
+- Zlé: pozorovaná hodnota je mimo rozsahu simulácií
+
+## Úloha 13.7b)
+**b)** Uveď posteriorný mediánový model hotelových zrušení na každej škále: log(odds), odds a pravdepodobnostnej.
+
+Z MCMC simulácie mám 20,000 hodnôt pre každý koeficient (napr. $\beta_0$, $\beta_1$, $\beta_2$, ...).Posteriorný mediánový model = model, kde použiješ mediány týchto posteriorných rozdelení namiesto priemerov.
+
+**Mediánový model** použije **mediány** všetkých koeficientov:
+$$\log\left(\frac{\pi}{1-\pi}\right) = median(\beta_0) + median(\beta_1) X_{1} + ..$$
+V R možnosť `tidy()` dáva MEAN, nie MEDIAN!
+- Tieto hodnoty můžeme zistiť z MCMC simulácie 
+- alebo pomocou `posterior::summarise_draws()`
+
+```{r}
+library(posterior)
+draws <- as_draws_df(hotel_model_1) 
+posterior_medians <- summarise_draws(draws, median) 
+
+# alebo z MCMC simulacie
+# posterior_samples <- as.data.frame(hotel_model_1) # Extrahuj MCMC vzorky
+# posterior_medians <- apply(posterior_samples, 2, median) # Vypočítaj mediány
+posterior_medians
+names(posterior_medians$median) <- posterior_medians$variable
+
+beta0 <- posterior_medians$median["(Intercept)"] |> round(3)
+beta1 <- posterior_medians$median["lead_time"] |> round(3)
+beta2 <- posterior_medians$median["previous_cancellations"] |> round(3)
+beta3 <- posterior_medians$median["is_repeated_guest"] |> round(3)
+beta4 <- posterior_medians$median["average_daily_rate"] |> round(3)
+
+exp_beta0 <- exp(beta0) |> round(3)
+exp_beta1 <- exp(beta1) |> round(3)
+exp_beta2 <- exp(beta2) |> round(3)
+exp_beta3 <- exp(beta3) |> round(3)
+exp_beta4 <- exp(beta4) |> round(3)
+```
+**Na log(odds) škále:**
+$$\log\left(\frac{\pi}{1-\pi}\right) = \beta_0 + \beta_1 \cdot \text{lead_time} + \beta_2 \cdot \text{prev_cancel} + \beta_3 \cdot \text{repeated_guest} + \beta_4 \cdot \text{avg_rate}$$
+$$\log\left(\frac{\pi}{1-\pi}\right) = `r beta0` + `r beta1` \cdot X_1 + `r beta2` \cdot X_2 + `r beta3` \cdot X_3 + `r beta4` \cdot X_4$$
+**Na odds škále:**
+
+$$\frac{\pi}{1-\pi} = e^{`r round(beta0, 3)` + `r round(beta1, 4)` X_1 + `r round(beta2, 3)` X_2 + `r round(beta3, 3)` X_3 + `r round(beta4, 4)` X_4}$$
+## Úloha 13.7c)
+**c)** Vypočítaj 80% posteriorné kredibilné intervaly pre modelové koeficienty. Interpretuj tie pre $\beta_2$ a $\beta_3$ na odds škále.
+
+**Posterior credible intervals na log(odds) škále**
+```{r 13-7c}
+tidy(hotel_model_1, effects = c("fixed"))
+posterior_interval(hotel_model_1, prob = 0.80) |> round(3)
+```
+**Posterior credible intervals na odds škále**
+```{r}
+exp(posterior_interval(hotel_model_1, prob = 0.80)) |> round(3)
+```
+
+**Interpretácia:**
+
+- $\beta_0 = `r beta0`$ (intercept)
+- $\beta_1 = `r beta1`$ (lead_time): za každý deň navyše sa log(odds) zvýšia o `r beta1`
+- $e^{\beta_1} = `r exp_beta1`$ znamená, že odds sa vynásobia `r exp_beta1`-krát (zvýšia o `r (exp_beta1 - 1)*100`%)
+
+## Úloha 13.7d)
+**d)** Ktoré zo štyroch prediktorov sú štatisticky a vecne významne asociované so zrušením rezervácie? Vysvetli.
+
+- štatistická významnosť: tie, kde 0 nie je v kredibilnom intervale
+- vecná významnosť: má efekt praktický význam v reálnom svete?
+
+| Prediktor | 10% | 90% | Obsahuje 0? |
+|-----------|-----|-----|-------------|
+| `lead_time` | 0.004 | 0.006 | NIE ✓ |
+| `previous_cancellations` | 1.700 | 2.691 | NIE ✓ |
+| `is_repeated_guest` | -1.478 | -0.090 | NIE ✓ |
+| `average_daily_rate` | 0.005 | 0.009 | NIE ✓ |
+
+#### Vecná (praktická) významnosť
+
+Pre posúdenie vecnej významnosti analyzujeme veľkosť efektov na odds škále:
+```{r h-odds-scale}
+exp(posterior_interval(hotel_model_1, prob = 0.80))
+```
+
+**1. `previous_cancellations` (predchádzajúce zrušenia)** - **VEĽMI SILNÝ efekt**
+
+- $e^{\beta_2} \in [5.47, 14.73]$
+- Za každé jedno predchádzajúce zrušenie sa odds ďalšieho zrušenia zvyšujú **5× až 15-krát**!
+- **Najsilnejší prediktor** - hosť, ktorý už raz zrušil, má dramaticky vyššiu pravdepodobnosť, že zruší aj teraz
+
+**2. `is_repeated_guest` (opakujúci sa hosť)** - **SILNÝ efekt**
+
+- $e^{\beta_3} \in [0.23, 0.91]$
+- Opakujúci sa hostia majú **77% až 9% nižšie odds** zrušenia v porovnaní s novými hosťami
+- Ekvivalentne: noví hostia majú 1.1× až 4.3× vyššie odds zrušenia
+- Prakticky veľmi dôležité - opakujúci sa hostia sú spoľahlivejší
+
+**3. `lead_time` (počet dní dopredu)** - **MALÝ efekt** (vecne menej významný)
+
+- $e^{\beta_1} \in [1.004, 1.006]$
+- Za každý deň dopredu sa odds zvyšujú len o **0.4% až 0.6%**
+- Musíš rezervovať ~140 dní vopred namiesto 0 dní, aby sa odds zdvojnásobili
+- Štatisticky významný, ale praktický význam je malý
+
+**4. `average_daily_rate` (priemerná denná cena)** - **MALÝ efekt** (vecne menej významný)
+
+- $e^{\beta_4} \in [1.005, 1.009]$
+- Za každý dolár navyše sa odds zvyšujú len o **0.5% až 0.9%**
+- Musíš zvýšiť cenu o ~$100, aby sa odds zdvojnásobili
+- Štatisticky významný, ale praktický význam je malý
+
+# Cvičenie 13.8: Predikcia a klasifikácia
+
+## Úloha a)
+
+**a)** Ako dobre tvoj model predpovedá, či bude rezervácia zrušená? Evaluuj klasifikačnú presnosť pomocou in-sample aj krížovej validácie s pravdepodobnostným prahom 0.5.
+###  Posteriorná predikcia
+
+Pre nové pozorovanie s prediktormi $X_{new}$:
+
+$$Y_{new} | \beta_0, \beta_1, \ldots, \beta_p \sim \text{Bern}(\pi_{new})$$
+
+kde $\pi_{new}$ sa vypočíta z posteriorných hodnôt koeficientov.
+
+### Klasifikačné pravidlo
+
+Pre klasifikačný prah $c \in [0, 1]$:
+
+- Ak $\hat{\pi} \geq c$, klasifikuj ako $Y = 1$
+- Ak $\hat{\pi} < c$, klasifikuj ako $Y = 0$
+
+kde $\hat{\pi}$ je priemerná posteriorná pravdepodobnosť.
+
+### Confusion matrix
+
+|  | $\hat{Y} = 0$ | $\hat{Y} = 1$ |
+||||
+| $Y = 0$ | a (True Negative) | b (False Positive) |
+| $Y = 1$ | c (False Negative) | d (True Positive) |
+
+### Metriky presnosti
+
+**Celková presnosť (Accuracy):**
+$$\text{accuracy} = \frac{a + d}{a + b + c + d}$$
+
+**Citlivosť (Sensitivity / True Positive Rate):**
+$$\text{sensitivity} = \frac{d}{c + d}$$
+- Podiel správne identifikovaných pozitívnych prípadov ($Y = 1$)
+- "Ako dobre model identifikuje zrušené rezervácie?"
+
+**Špecificita (Specificity / True Negative Rate):**
+$$\text{specificity} = \frac{a}{a + b}$$
+- Podiel správne identifikovaných negatívnych prípadov ($Y = 0$)
+- "Ako dobre model identifikuje nezrušené rezervácie?"
+
+### Trade-off
+
+- **Zníženie prahu** $c$: ↑ sensitivity, ↓ specificity
+- **Zvýšenie prahu** $c$: ↓ sensitivity, ↑ specificity
+
+### Evaluácia klasifikačnej presnosti - MANUÁLNE
+**KROK 1: Posteriorná predikcia pre všetky pozorovania**
+-  Vytvoríme 20,000 predikcií (z MCMC) pre každú rezerváciu v datasete
+```{r}
+binary_prediction <- posterior_predict(hotel_model_1, newdata = hotel)
+dim(binary_prediction)  # Ukáž rozmery
+
+```
+- **Výsledok**: matica 20000 x n (n = počet rezervácií)
+- **Každý stĺpec** = 20,000 predikcií (0 alebo 1) pre jednu rezerváciu
+
+**KROK 2: Výpočet pravdepodobností zrušenia**
+- Pre každú rezerváciu: koľko % z 20,000 predikcií je "1" (zrušené)?
+- Toto je posteriorná pravdepodobnosť zrušenia
+```{r}
+probabilities <- colMeans(binary_prediction)
+```
+_Príklad_: ak 12,000 z 20,000 predikcií = 1, potom p = 0.6
+
+Pozrime sa na prvých 10 pravdepodobností
+```{r}
+head(probabilities, 10)
+```
+
+**KROK 3: Klasifikácia s prahom 0.5**
+- Klasifikačné pravidlo: ak p >= 0.5, klasifikuj ako "zrušené" (1), inak "nezrušené" (0)
+Vytvoríme si tabuľku s výsledkami
+
+```{r}
+classifications <- as.numeric(probabilities >= 0.5)
+
+results <- hotel %>% 
+  mutate(
+    prob_cancel = probabilities,              # Posteriorná pravdepodobnosť
+    predicted = classifications,              # Naša predikcia (0/1)
+    actual = as.numeric(is_canceled)         # Skutočný výsledok (0/1)
+  ) %>%
+  select(actual, predicted, prob_cancel, everything())
+
+# Pozrime sa na prvé riadky
+results |> head(10)
+
+```
+
+**KROK 4: Confusion Matrix - MANUÁLNE**
+```{r}
+confusion <- table(Actual = results$actual, Predicted = results$predicted)
+print(confusion)
+```
+           Predicted
+ Actual       0    1
+      0      a    b     <- nezrušené rezervácie
+      1      c    d     <- zrušené rezervácie
+
+* a = True Negatives (správne predpovedané nezrušené)
+* b = False Positives (nesprávne predpovedané ako zrušené)
+* c = False Negatives (nesprávne predpovedané ako nezrušené)
+* d = True Positives (správne predpovedané zrušené)
+
+**KROK 5: Výpočet metrík - MATEMATIKA**
+
+```{r}
+a <- confusion[1, 1]  # True Negatives
+b <- confusion[1, 2]  # False Positives
+c <- confusion[2, 1]  # False Negatives
+d <- confusion[2, 2]  # True Positives
+```
+
+**Overall Accuracy = (správne klasifikované) / (všetky)**
+
+```{r}
+accuracy <- (a + d) / (a + b + c + d)
+```
+
+**Sensitivity = (správne zrušené) / (všetky skutočne zrušené)**
+
+```{r}
+sensitivity <- d / (c + d)
+```
+
+**Specificity = (správne nezrušené) / (všetky skutočne nezrušené)**
+
+```{r}
+specificity <- a / (a + b)
+```
+
+**Confusion Matrix:**
+```{r}
+print(confusion)
+cat("True Negatives (a):", a, "\n")
+cat("False Positives (b):", b, "\n")
+cat("False Negatives (c):", c, "\n")
+cat("True Positives (d):", d, "\n\n")
+cat("Overall Accuracy:", round(accuracy, 4), "\n")
+cat("Sensitivity:", round(sensitivity, 4), "\n")
+cat("Specificity:", round(specificity, 4), "\n\n")
+
+```
+
+**KROK 7: Krížová validácia**
+CV rozdelí dáta na 10 častí, 10x zopakuje: trénovanie na 9 častiach, testovanie na 1
+```{r}
+cv_result <- classification_summary_cv(model = hotel_model_1, data = hotel, cutoff = 0.5, k = 10)
+print(cv_result$cv)
+```
+
+**Validácia za použitia funkcií**
+```{r 13-8a}
+# In-sample klasifikácia (prah 0.5)
+insample <- classification_summary(model = hotel_model_1, data = hotel, cutoff = 0.5)
+insample
+
+# Krížová validácia (prah 0.5, k = 10)
+cv <- classification_summary_cv(model = hotel_model_1, data = hotel, cutoff = 0.5, k = 10)
+cv
+
+```
+**In-sample metriky:** accuracy = X%, sensitivity = Y%, specificity = Z%
+
+**CV metriky:** accuracy = X%, sensitivity = Y%, specificity = Z%
+
+## Úloha 13.8b)
+**b)** Sú krížovo-validované a in-sample odhady klasifikačnej presnosti podobné? Vysvetli, prečo má tento výsledok zmysel v kontexte tejto analýzy.
+
+In-sample a CV metriky sú **veľmi podobné** (rozdiel < 1 percentuálny bod).
+
+| Metrika | In-sample | CV | Rozdiel |
+|---------|-----------|-----|---------|
+| Accuracy | 68.1% | 68.6% | +0.5% |
+| Sensitivity | 29.6% | 30.3% | +0.7% |
+| Specificity | 90.5% | 90.7% | +0.2% |
+
+**Vysvetlenie:**
+
+Metriky sú takmer identické, čo naznačuje, že model **nie je overfittovaný** a dobre generalizuje na nové dáta.
+
+_Poznámka:_ [Ak by boli odlišné:] Model je overfittovaný - učí sa špecifiká trénovacích dát.
+
+
+**Prečo to dáva zmysel v kontexte tejto analýzy:**
+
+1. **Veľký dataset** - máme dostatočný počet rezervácií, takže model sa naučil skutočné vzory, nie náhodný šum v dátach
+
+2. **Jednoduché prediktory** - používame len 4 prediktory, čo znižuje riziko overfittingu
+
+3. **Silné signály** - prediktory ako `previous_cancellations` majú veľký efekt (e^β > 5), takže model zachytáva reálne a stabilné vzťahy
+
+4. **Logistická regresia** - relatívne jednoduchý lineárny model s nízkym rizikom overfittingu
+
+## Úloha 13.8c)
+**c)** Interpretuj krížovo-validované celkové accuracy, sensitivity a specificity v kontexte tejto analýzy.
+
+**Overall accuracy (68.6%):** Model správne klasifikuje 68.6% všetkých rezervácií.
+
+**Sensitivity (30.3%):** Z rezervácií, ktoré boli skutočne zrušené, model správne identifikoval len 30.3%. **To je nízka hodnota** - model má problém identifikovať zrušené rezervácie.
+
+**Specificity (90.7%):** Z rezervácií, ktoré neboli zrušené, model správne identifikoval 90.7%. **To je dobrá hodnota** - model je veľmi dobrý v identifikácii nezrušených rezervácií.
+
+**Záver:** Model je **konzervatívny** - radšej klasifikuje rezervácie ako "nezrušené" a má tendenciu prehliadať skutočne zrušené rezervácie. S prahom 0.5 je málo citlivý na zrušenia. Pre zlepšenie sensitivity by bolo potrebné znížiť klasifikačný prah (napr. na 0.3 alebo 0.2).
+
+
+**d)** Ako hotel booking agent by si chcela zvýšiť sensitivity tvojich klasifikácií na 0.75. Identifikuj pravdepodobnostný prah, ktorý môžeš použiť na dosiahnutie tejto úrovne pri zachovaní čo najvyššej špecificity.
+
+**e)** Hosť, ktorý je nový v hoteli a zrušil rezerváciu len 1-krát predtým, si zarezervoval izbu za $100 denne 30 dní vopred. Simuluj, vykreli a diskutuj posteriorný prediktívny model $Y$, či hosť zruší túto rezerváciu.
+
+**f)** Vymysli charakteristiky inej fiktívnej rezervácie, ktorá je pravdepodobnejšia na zrušenie ako rezervácia v časti m. Podpor tvoje tvrdenie simuláciou, vykreslením a porovnaním posteriorného prediktívneho modelu $Y$ tejto rezervácie s tým v časti m.
+
+
+
+## Riešenie 13.8
+
+```{r 13-8}
+# Posterior predictions of binary outcome
+set.seed(84735)
+binary_prediction <- posterior_predict(
+  hotel_model_1, newdata = hotel)
+
+
+# Summarize the posterior predictions of Y
+table(binary_prediction)
+
+colMeans(binary_prediction)
+
+
+proportion_canceled <- function(x){mean(x == 1)}
+pp_check(hotel_model_1, nreps = 100,
+         plotfun = "stat", stat = "proportion_canceled") + 
+  xlab("probability of cancelling")
+
+
+# classification
+hotel_classifications <- hotel %>% 
+  mutate(cancel_prob = colMeans(binary_prediction),
+         cancel_class_1 = as.numeric(cancel_prob >= 0.4)) %>% 
+  select(cancel_prob, cancel_class_1, is_canceled, lead_time, previous_cancellations,
+         is_repeated_guest, average_daily_rate)
+
+# Confusion matrix
+hotel_classifications %>% 
+  tabyl(is_canceled, cancel_class_1) %>% 
+  adorn_totals(c("row", "col")) 
+
+set.seed(84735)
+classification_summary(model = hotel_model_1, data = hotel, cutoff = 0.5)$confusion_matrix
+```
+
+
+
+# Cvičenie 13.9
+
+```{r 13-9}
+# Tu pokračuj s ďalšími úlohami
+```
+
+
+
+# Užitočné vzorce a funkcie
+
+## Základné transformácie
+
+**Odds z pravdepodobnosti:**
+$$\text{odds} = \frac{\pi}{1-\pi}$$
+
+**Pravdepodobnosť z odds:**
+$$\pi = \frac{\text{odds}}{1 + \text{odds}}$$
+
+**Log odds (logit):**
+$$\text{logit}(\pi) = \log\left(\frac{\pi}{1-\pi}\right)$$
+
+**Inverzný logit:**
+$$\pi = \frac{e^{\text{logit}}}{1 + e^{\text{logit}}}$$
+
+
+
+## Kľúčové R funkcie
+
+### Model
+
+```{r useful-functions-1, eval=FALSE}
+# Logistická regresia
+stan_glm(y ~ x1 + x2, 
+         data = data, 
+         family = binomial,
+         prior_intercept = normal(m0, s0),
+         prior = normal(m, s, autoscale = TRUE))
+```
+
+### Diagnostika
+
+```{r useful-functions-2, eval=FALSE}
+# MCMC diagnostika
+mcmc_trace(model)
+mcmc_dens_overlay(model)
+mcmc_acf(model)
+neff_ratio(model)
+rhat(model)
+
+# Posterior predictive check
+pp_check(model)
+```
+
+### Posteriorné súhrny
+
+```{r useful-functions-3, eval=FALSE}
+# Kredibilné intervaly
+posterior_interval(model, prob = 0.80)
+
+# Transformácia na odds škálu
+exp(posterior_interval(model, prob = 0.80))
+
+# Tidy súhrn
+tidy(model, effects = "fixed")
+```
+
+### Predikcia a klasifikácia
+
+```{r useful-functions-4, eval=FALSE}
+# Posteriorná predikcia
+posterior_predict(model, newdata = new_data)
+
+# In-sample klasifikácia
+classification_summary(model, data, cutoff = 0.5)
+
+# Krížová validácia
+classification_summary_cv(model, data, cutoff = 0.5, k = 10)
+```
