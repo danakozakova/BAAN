@@ -358,16 +358,16 @@ penguins_clean %>%
        ) +
   theme_minimal()
 
-cor <- cor(penguins_clean$bill_length_mm, penguins_clean$flipper_length_mm)
-r_squared <- cor^2
+cor_bill <- cor(penguins_clean$bill_length_mm, penguins_clean$flipper_length_mm)
+r_bill_squared <- cor_bill^2
 
 n <- nrow(penguins_clean)
 
 ```
 
-### b. Vhodnosť normálnej regresie
+Medzi `r n` tučniakmi vidíme pozitívny lineárny vzťah. Korelačný koeficient je **r = `r round(cor_bill, 3)`**. Teda `bill length` vysvetľuje približne **`r round(r_bill_squared*100, 1)`%** variability v dĺžke plutvy.
 
-Medzi `r n` tučniakmi pozorujeme vzťah s koreláciou **r = `r round(cor, 3)`**.
+### b. Vhodnosť normálnej regresie
 
 **Kontrola predpokladov:**
 
@@ -380,7 +380,7 @@ Medzi `r n` tučniakmi pozorujeme vzťah s koreláciou **r = `r round(cor, 3)`**
 
 Simple Normal regression je vhodný. 
 
-Medzi `r n` tučniakmi vidíme pozitívny lineárny vzťah. Korelačný koeficient je **r = `r round(cor, 3)`**, čo znamená že `bill length` vysvetľuje približne **`r round(r_squared*100, 1)`%** variability vo flipper length.
+
 
 ## Exercise 9.18: Penguins - Posterior Analysis
 
@@ -399,10 +399,10 @@ Medzi `r n` tučniakmi vidíme pozitívny lineárny vzťah. Korelačný koeficie
 ```{r 9-18-a}
 penguin_posterior <- update(penguin_prior, prior_PD = FALSE)
 
-print(penguin_posterior)
+coef_summary <- tidy(penguin_posterior, effects = c("fixed", "aux"))
+print(coef_summary)
 
 ```
-
 ### b. Graf 100 posteriórnych priamok
 Porovnanie priórnych a posteriórnych priamok
 
@@ -436,6 +436,11 @@ posterior_summary <- tidy(penguin_posterior,
                           conf.int = TRUE, 
                           conf.level = 0.90)
 
+posterior_summary$term <- c("β₀ (Intercept)", 
+                            "β₁ (bill_length_mm)", 
+                            "σ (sigma)",
+                            "mean_PPD")
+
 posterior_summary %>%
   select(term, estimate, conf.low, conf.high) %>%
   mutate(across(where(is.numeric), ~round(., 2))) %>%
@@ -443,36 +448,275 @@ posterior_summary %>%
         caption = "Posterior summary with 90% credible intervals")
 
 b0 <- round(posterior_summary$estimate[1], 2)
-b0_l <- round(posterior_summary$conf.low[1], 2)
-b0_h <- round(posterior_summary$conf.high[1], 2)
-
 b1 <- round(posterior_summary$estimate[2], 2)
 b1_l <- round(posterior_summary$conf.low[2], 2)
 b1_h <- round(posterior_summary$conf.high[2], 2)
-
-s <- round(posterior_summary$estimate[3], 2)
-s_l <- round(posterior_summary$conf.low[3], 2)
-s_h <- round(posterior_summary$conf.high[3], 2)
+sigma <- round(posterior_summary$estimate[3], 2)
 ```
-
-
-Posteriorne mediány parametrov:
-
-- **Intercept ($\beta_0$):** `r b0` mm  
-  90% CI: [`r b0_l`, `r b0_h`]
-
-- **Slope ($\beta_1$):** `r b1` mm  
-  90% CI: [`r b1_l`, `r b1_h`]  
-
-- **Sigma (σ):** `r s` mm  
-  90% CI: [`r s_l`, `r s_h`]  
-
 ### d. Interpretácia 90% posteriórneho kredibilného intervalu pre $\beta_1$
 
 Za každý **1mm nárast v dĺžke zobáka**, dĺžka plutiev v priemere **narastie o `r b1` mm**.
 
-- S **90% pravdepodobnosťou** je skutočná hodnota $\beta_1$ medzi `r b1_l` a `r b1_h` mm. To znamená, že sme si na 90% istí, že za každý 1mm dlhší zobák sú plutvy dlhšie o niekde medzi `r b1_l` až `r b1_h` mm.
+- S 90% pravdepodobnosťou je skutočná hodnota $\beta_1$ medzi `r b1_l` a `r b1_h` mm. To znamená, že sme si na 90% istí, že za každý 1mm dlhší zobák sú plutvy dlhšie o približne `r b1_l` až `r b1_h` mm.
 
 ### e. Preukázanie posteriórneho vzťahu 
 - Celý interval je **nad nulou** -> čiže silná evidencia pre pozitívny vzťah
 - To možno vidieť aj na grafoch 100 priamok, všetky majú pozitívny sklon -> žiadna posteriórna vzorka nenaznačuje negatívny vzťah
+
+
+## Exercise 9.19: Penguins - Posterior Prediction
+> Suppose we meet Pablo the penguin whose bill is 51mm long.
+>
+> a. Without using the `posterior_predict()` shortcut function, simulate the posterior model for the typical flipper length among penguins with 51mm bills as well as the posterior predictive model for Pablo's flipper length.
+>
+> b. Construct, discuss, and compare density plot visualizations for the two separate posterior models in part a.
+>
+> c. Calculate and interpret an 80% posterior prediction interval for Pablo's flipper length.
+>
+> d. Would the 80% credible interval for the typical flipper length among all penguins with 51mm bills be wider or narrower? Explain.
+>
+> e. Use `posterior_predict()` to confirm your results to parts b and c.
+
+
+### a. Manuálna simulácia predikcie
+odhadnúř dĺžku plutvy, ak poznáme, že bill je 51 mm
+```{r}
+pablo_bill <- 51
+# extrahovanie vzoriek z posterioru
+posterior_df <- as.data.frame(penguin_posterior)
+posterior_df |> head()
+
+# pre kazdy riadok vypocitat odhad strednej hodnoty dlzky plutvy = typicka dlzka posterior pre mu
+# mu = beta_0 + beta_1 * 51
+posterior_df <- posterior_df %>% 
+  mutate(mu = `(Intercept)` + bill_length_mm * pablo_bill)
+
+# pre kazdy riadok simulovat odhad dlzky Pablovej plutvy = Y
+# Y ~ N(mu, sigma)
+posterior_df <- posterior_df %>%
+  mutate(y = rnorm(n = n(), mean = mu, sd = sigma))
+
+# Summary štatistiky
+mu_median <- median(posterior_df$mu)
+mu_lower <- quantile(posterior_df$mu, 0.10)
+mu_upper <- quantile(posterior_df$mu, 0.90)
+
+y_median <- median(posterior_df$y)
+y_lower <- quantile(posterior_df$y, 0.10)
+y_upper <- quantile(posterior_df$y, 0.90)
+
+```
+**Posteriórny model**:
+\begin{equation}
+Y_i | \beta_0, \beta_1, \sigma \stackrel{ind}{\sim} N\left(\mu_i, \sigma^2\right) \;\; \text{ kde } \;\; \mu_i = \beta_0 + \beta_1X_i \\
+\end{equation}
+
+**Dve časti modelu:**
+
+1. **Posterior pre $\mu_i$** (typická dĺžka plutiev pri 51mm zobáku):
+   - Len parametrická neistota ($\beta_0$, $\beta_1$)
+   - Median: `r round(mu_median, 1)` mm
+   - 90% CI: [`r round(mu_lower, 1)`, `r round(mu_upper, 1)`]
+
+2. **Posterior predictive pre $Y_i$** (odhad Pablovej plutvy):
+   - Parametrická neistota + individuálna variabilita ($\sigma$)
+   - Median: `r round(y_median, 1)` mm
+   - 90% CI: [`r round(y_lower, 1)`, `r round(y_upper, 1)`]
+
+### b. Porovnanie posteriorných modelov
+```{r}
+posterior_df |> ggplot() +
+  geom_density(aes(x = mu, fill = "mu(typical)"), alpha = 0.5) + 
+  geom_density(aes(x = y, fill = "y (Pablo)"), alpha = 0.5) +
+  scale_fill_manual(values = c("steelblue", "coral")) + 
+  labs(title = "Posterior typical vs Posterior predictive",
+       x = "Flipper length (mm)", fill = "") + 
+  theme_minimal()
+```
+
+### c. Prediction interval pre Pabla
+```{r}
+y_pi <- quantile(posterior_df$y, probs = c(0.10, 0.90))
+
+```
+**80% Posterior predikčný interval**: [`r round(y_pi[1], 1)`, `r round(y_pi[2], 1)`] mm
+
+S 80% pravdepodobnosťou má Pablo plutvy dlhé medzi `r round(y_pi[1], 1)` a `r round(y_pi[2], 1)` mm.
+
+### d. Porovnanie šírok intervalov
+Kredibilný interval pre typickú dĺžku plutvy je užší, lebo kredibilný interval zahŕňa len neistotu v hodnotách regresných parametrov. Predikčný interval zahŕňa aj individuálnu variabilitu od typickej hodnoty. Odhad priemeru je v užšom intervale ako odhad jedinca.
+
+```{r}
+mu_ci <- quantile(posterior_df$mu, probs = c(0.10, 0.90))
+```
+**80% kredibilný interval**: [`r round(mu_ci[1], 1)`, `r round(mu_ci[2], 1)`] mm
+
+Typická hodnota je v tomto intervale
+
+```{r}
+posterior_df |> ggplot() +
+  geom_density(aes(x = mu, fill = "mu(typical)"), alpha = 0.5) + 
+  geom_density(aes(x = y, fill = "y (Pablo)"), alpha = 0.5) +
+  geom_vline(xintercept = mu_ci[1], color = "steelblue", linetype = "dashed") +
+  geom_vline(xintercept = mu_ci[2], color = "steelblue", linetype = "dashed") + 
+  geom_vline(xintercept = y_pi[1], color = "coral", linetype = "dashed") +
+  geom_vline(xintercept = y_pi[2], color = "coral", linetype = "dashed") +
+  scale_fill_manual(values = c("steelblue", "coral")) + 
+  labs(title = "Posterior typical vs Posterior predictive",
+       x = "Flipper length (mm)", fill = "") + 
+  theme_minimal()
+```
+
+### e. Overenie pomocou `posterior_predict()`
+```{r}
+post_pred <- posterior_predict(penguin_posterior, 
+                               newdata = data.frame(bill_length_mm = pablo_bill)) |>
+  as.vector()
+
+comparison_df <- data.frame(
+  manual = posterior_df$y,
+  fun = post_pred
+)
+
+comparison_df |> ggplot() +
+  geom_density(aes(x = manual, fill = "Manualne"), alpha = 0.5) +
+  geom_density(aes(x = fun, fill = "Funkcia"), alpha = 0.5) + 
+  scale_fill_manual(values = c("steelblue", "coral")) + 
+  labs(title = "Manually vs function posterior_predict", 
+       x = "Flipper length (mm)",
+       fill ="Method") + 
+  theme_minimal()
+
+```
+
+
+## Exercise 9.20: Penguins - Body Mass Model
+> Instead of bill length, consider the Normal regression model of penguin flipper lengths ($Y$) by body mass in grams ($X$).
+>
+> a.Based on their study of penguins in other regions, suppose that researchers are quite certain about the relationship between flipper length and body mass, prior to seeing any data: $\beta_1 \sim N(0.01, 0.002^2)$. Describe their prior understanding.
+>
+> b. Plot and discuss the observed relationship between `flipper_length_mm` and `body_mass_g` among the 344 sampled penguins.
+>
+> c. In a simple Normal regression model of flipper length $Y$ by one predictor $X$, do you think that the $\sigma$ parameter is bigger when $X$ = bill length or when $X$ = body mass? Explain your reasoning and provide some evidence from the information you already have.
+>
+> d. Use `stan_glm()` to simulate the Normal regression posterior model of flipper length by body mass using the researchers' prior for $\beta_1$ and weakly informative priors for $\beta_{0c}$ and $\sigma$. Do so with 4 chains run for 10000 iterations each.
+>
+> e. Plot the posterior model of the $\beta_1$ `body_mass_g` coefficient. Use this to describe the researchers' posterior understanding of the relationship between flippers and mass and how, if at all, this evolved from their prior understanding.
+
+### a. Apriórne pochopenie vzťahu
+
+Výskumníci prepodkladajú, že $\beta_1$ ≈ 0.01 mm/g.
+To znamená:
+* Za každý **1g** nárastu hmotnosti → plutvy dlhšie o **0.01 mm**
+* Za každých **100g** -> plutvy dlhšie o **1 mm**
+* Za každý **1kg** -> plutvy dlhšie o **10 mm**
+
+95% prior interval: 0.01 ± 2 * 0.002 = [0.006, 0.014]
+```{r 9-20-a}
+# 95% interval
+prior_lower <- 0.01 - 2*0.002
+prior_upper <- 0.01 + 2*0.002
+
+ggplot(data.frame(x = c(0, 0.02)), aes(x)) +
+  stat_function(fun = dnorm, args = list(mean = 0.01, sd = 0.002),
+                fill = "steelblue", geom = "area", alpha = 0.5) +
+  geom_vline(xintercept = prior_lower, linetype = "dotted", color = "grey40") +
+  geom_vline(xintercept = prior_upper, linetype = "dotted", color = "grey40") +
+  labs(title = "Informativny prior pre beta_1",
+       subtitle = "N(0.01, 0.002^2), 95% CI",
+       x = "beta_1 (mm / g)",
+       y = "Density") +
+  theme_minimal()
+```
+
+### b. Vizualizácia vzťahu flipper length a body mass
+```{r}
+
+penguins_clean %>% 
+  ggplot(aes(x = body_mass_g, y = flipper_length_mm)) +
+  geom_point(alpha = 0.6, color = "steelblue", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 1) +
+  labs(title = "Observed relationship: Flipper vs Body mass",
+       subtitle = paste0("n = ", nrow(penguins_clean), " penguins"),
+       x = "Body mass",
+       y = "Flipper length (mm)"
+       ) +
+  theme_minimal()
+
+cor_mass <- cor(penguins_clean$body_mass_g, penguins_clean$flipper_length_mm)
+r_mass_squared <- cor_mass^2
+
+```
+
+Medzi `r n` tučniakmi vidíme pozitívny lineárny vzťah. Korelačný koeficient je **r = `r round(cor_mass, 3)`**. Teda `body_mass_g` vysvetľuje približne **`r round(r_mass_squared*100, 1)`%** variability dĺžky plutvy.
+
+### c. Porovnanie $\sigma$ pre rôzne prediktory
+$\sigma$ meria rozptyl okolo priamky: $Y_i \sim N(\beta_0 + \beta_1 X_i, \sigma^2)$
+$\sigma$ je menšia pre body mass model.
+
+Keď porovnáme dĺžku plutvy ako závislú premennú od jedného prediktora v jednoduchej normálnej regresii:
+
+- `body mass` tesnejšie koreluje s dĺžkou plutvy ako `dĺžka zobáka`
+- na grafe vidno, že body sú tu bližšie ku regresnej priamke
+- teda rozptyl od typickej hodnoty je menší
+
+Korelácie:
+
+- Flipper vs Bill length: r = `r round(cor_bill, 3)`
+- Flipper vs Body mass: r = `r round(cor_mass, 3)`
+- `Body mass` má silnejšiu koreláciu (`r round(cor_mass, 3)` > `r round(cor_bill, 3)`)
+
+#### d. Posteriorna simulácia s informatívnym priorom
+- namiesto `weakly informative` prioru použijeme prior výskumníkov o $\beta_1$ koeficiente
+```{r}
+penguin_mass_posterior <- stan_glm(
+  flipper_length_mm ~ body_mass_g,
+  data = penguins_clean,
+  family = gaussian,
+  prior_intercept = normal(200, 2.5, autoscale = TRUE),   
+  prior = normal(0.01, 0.002, autoscale = FALSE),       # od vyskumnikov
+  prior_aux = exponential(1, autoscale = TRUE),           
+  chains = 4, 
+  iter = 10000, 
+  refresh = 0
+)
+
+# Posterior summary
+tidy(penguin_mass_posterior, 
+     effects = c("fixed", "aux"),
+     conf.int = TRUE,
+     conf.level = 0.90) %>%
+  mutate(across(where(is.numeric), ~round(., 3)))
+```
+#### e. Evolúcia pochopenia vzťahu
+- porovnanie pochopenia regresného koeficientu na začiatku v priori a následne v posteriórnom modeli.
+```{r}
+# beta1 z posterior vzoriek
+posterior_mass_df <- as.data.frame(penguin_mass_posterior)
+beta1_posterior <- posterior_mass_df$body_mass_g # vektor 20,000 MCMC vzoriek beta_1
+
+# data pre prior krivku
+x_range <- seq(0.005, 0.015, length.out = 1000)
+beta1_prior <- dnorm(x_range, mean = 0.01, sd = 0.002)
+
+ggplot() +
+  geom_line(aes(x = x_range, y = beta1_prior, color = "Prior"),
+            linewidth = 1) + 
+  geom_density(data = data.frame(x = beta1_posterior), 
+               aes(x = x, color = "Posterior"),
+               linewidth = 1) +
+  scale_color_manual(values = c("Prior" = "grey50", 
+                                 "Posterior" = "steelblue")) +
+  labs(title = "Evolucia pochopenia beta_1",
+       x = "beta_1 (mm / g)",
+       y = "Density",
+       color = "") +
+  theme_minimal()
+```
+
+Evolúcia pochopenia:
+
+Prior: $\beta_1$ = 0.01 (výskumníci očakávali)
+Posterior: $\beta_1$ ≈ `r round(median(beta1_posterior), 4)`
+
+Posterior je  vyšší ako prior. 
