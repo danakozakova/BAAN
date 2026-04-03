@@ -1,0 +1,461 @@
+---
+title: 'Předmět: Bayesiánská analýza (MPE_BAAN)'
+subtitle: Třetí úkol (skupina 13)
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+authors: Dana Kozáková, Daniel Navrátil, Romana Vystrčilová, Marek Hrazdíra
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 8, fig.height = 6, fig.align = "center")
+```
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(bayesrules)
+library(tidyverse)
+library(rstan)
+library(rstanarm)
+library(bayesplot)
+library(tidybayes)
+library(janitor)
+library(broom.mixed)
+library(e1071)
+```
+
+# PŘÍKLAD 4
+
+# Exercise 14.11 (Open exercise: vaccine safety)
+
+> The *pulse_of_the_nation* survey also asked respondents about their agreement with the statement that *vaccines_are_safe*, selecting from the following options: *Neither Agree nor Disagree*, *Somewhat Agree*, *Somewhat Disagree*, *Strongly Agree* or *Strongly Disagree*. In this open-ended exercise, we complete a naive Bayesian analysis of belief in the safety of vaccines, selecting a variety of possible predictors.
+
+---
+
+## Úvod a cíl analýzy
+
+Cílem této úlohy je aplikovat **naivní Bayesovský klasifikátor** (kapitola 14 učebnice *Bayes Rules!*) na data z průzkumu *Pulse of the Nation* a analyzovat, jak politické, demografické a socioekonomické charakteristiky respondentů souvisí s jejich postojem k výroku **„Vaccines are safe"**.
+
+Odezvová proměnná má pět kategorií (Likertova škála), a je proto vhodná pro vícetřídní klasifikaci pomocí naivního Bayese.
+
+---
+
+## Použitá data a proměnné
+
+**Odezvová proměnná:**
+
+- `vaccines_are_safe` – míra souhlasu s tvrzením, že vakcíny jsou bezpečné
+
+**Prediktory:**
+
+- `age` – věk respondenta
+- `income` – příjem domácnosti
+- `education` – dosažené vzdělání
+- `party` – stranická identifikace
+- `trump_approval` – hodnocení Donalda Trumpa
+- `robots` – postoj k robotizaci (proxy vztahu k technologiím a vědě)
+
+Zvolené proměnné reprezentují kombinaci politických postojů a socioekonomických charakteristik, které mohou souviset s důvěrou ve vědu a zdravotní doporučení.
+
+---
+
+## Příprava dat
+
+```{r data-prep}
+# Načtení dat
+data(pulse_of_the_nation)
+
+# Výběr proměnných a odstranění chybějících hodnot
+potn <- pulse_of_the_nation %>%
+  select(
+    vaccines_are_safe,
+    age,
+    income,
+    education,
+    party,
+    trump_approval,
+    robots
+  ) %>%
+  drop_na()
+
+# Základní přehled
+dim(potn)
+```
+
+Po odstranění chybějících hodnot máme k dispozici `r nrow(potn)` kompletních pozorování.
+
+---
+
+## Explorativní analýza
+
+### Rozdělení odpovědí
+
+Nejprve se podíváme na rozdělení odpovědí na otázku týkající se bezpečnosti vakcín.
+
+```{r eda-table}
+potn %>% tabyl(vaccines_are_safe) %>%
+  adorn_pct_formatting(digits = 1)
+```
+
+### Grafické znázornění rozdělení odpovědí
+
+```{r eda-bar, fig.width=10, fig.height=5}
+ggplot(potn, aes(x = vaccines_are_safe)) +
+  geom_bar(fill = "steelblue") +
+  labs(
+    title = "Rozdělení postojů k bezpečnosti vakcín",
+    x = "Postoj k výroku \"Vaccines are safe\"",
+    y = "Počet respondentů"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Interpretace:** Rozdělení odpovědí je výrazně nevyvážené – dominuje kategorie *Strongly Agree* (přibližně `r round(mean(potn$vaccines_are_safe == "Strongly Agree") * 100, 0)`% respondentů), zatímco neutrální a nesouhlasné odpovědi jsou zastoupeny jen v malém počtu případů. Tato nevyváženost má důležité důsledky pro chování klasifikačního modelu.
+
+---
+
+### Vizualizace vztahů s prediktory
+
+Podle postupu z učebnice (kapitola 14, Figures 14.1 a 14.2 pro penguins) si nejprve vizualizujeme vztahy mezi odezvovou proměnnou a vybranými prediktory.
+
+#### Vztah s politickou stranou
+
+```{r viz-party, fig.width=10, fig.height=6}
+# Proporcionální sloupcový graf (jako Figure 14.1 v učebnici)
+ggplot(potn %>% drop_na(party, vaccines_are_safe),
+       aes(x = party, fill = vaccines_are_safe)) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Postoj k vakcínám podle politické strany",
+    x = "Politická strana",
+    y = "Podíl",
+    fill = "Postoj k vakcínám"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Interpretace:** Graf ukazuje rozdíly v postojích k vakcínám mezi politickými stranami. Každý sloupec má výšku 1 (100 %), a barevné části ukazují podíl respondentů s různými názory.
+
+#### Vztah s hodnocením Trumpa
+
+```{r viz-trump, fig.width=10, fig.height=6}
+ggplot(potn %>% drop_na(trump_approval, vaccines_are_safe),
+       aes(x = trump_approval, fill = vaccines_are_safe)) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Postoj k vakcínám podle hodnocení Trumpa",
+    x = "Hodnocení Trumpa",
+    y = "Podíl",
+    fill = "Postoj k vakcínám"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#### Vztah s věkem (kvantitativní prediktor)
+
+```{r viz-age, fig.width=10, fig.height=6}
+# Density plot (jako Figure 14.2 v učebnici)
+ggplot(potn %>% drop_na(age, vaccines_are_safe),
+       aes(x = age, fill = vaccines_are_safe)) +
+  geom_density(alpha = 0.5) +
+  labs(
+    title = "Rozdělení věku podle postoje k vakcínám",
+    x = "Věk (roky)",
+    y = "Hustota",
+    fill = "Postoj k vakcínám"
+  ) +
+  theme_minimal()
+```
+
+**Interpretace:** Každá barevná křivka ukazuje, jak jsou rozloženi lidé daného věku v rámci každé kategorie názoru. Pokud se křivky hodně překrývají, věk pravděpodobně nebude silným prediktorem.
+
+#### Vztah s příjmem (kvantitativní prediktor)
+
+```{r viz-income, fig.width=10, fig.height=6}
+ggplot(potn %>% drop_na(income, vaccines_are_safe),
+       aes(x = income, fill = vaccines_are_safe)) +
+  geom_density(alpha = 0.5) +
+  labs(
+    title = "Rozdělení příjmu podle postoje k vakcínám",
+    x = "Příjem (v tis. USD)",
+    y = "Hustota",
+    fill = "Postoj k vakcínám"
+  ) +
+  theme_minimal()
+```
+
+---
+
+### Normální rozdělení kvantitativních prediktorů
+
+Naivní Bayesovský model předpokládá, že kvantitativní prediktory (jako věk a příjem) mají **normální rozdělení** v rámci každé kategorie odezvové proměnné (viz Section 14.1.2 v učebnici). To znamená, že pro každou kategorii `vaccines_are_safe` model odhaduje střední hodnotu $\mu$ a směrodajnou odchylku $\sigma$.
+
+#### Normální rozdělení pro věk
+
+```{r normal-age}
+# Výpočet průměru a směrodajné odchylky věku pro každou kategorii
+age_stats <- potn %>%
+  group_by(vaccines_are_safe) %>%
+  summarize(
+    mean_age = mean(age, na.rm = TRUE),
+    sd_age = sd(age, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n))
+
+age_stats
+```
+
+**Interpretace:** Model předpokládá, že například lidé, kteří odpověděli "Strongly Agree", mají věk normálně rozložený okolo průměru `r round(age_stats$mean_age[1], 1)` roků se směrodajnou odchylkou `r round(age_stats$sd_age[1], 1)` roků.
+
+#### Normální rozdělení pro příjem
+
+```{r normal-income}
+# Výpočet průměru a směrodajné odchylky příjmu pro každou kategorii
+income_stats <- potn %>%
+  group_by(vaccines_are_safe) %>%
+  summarize(
+    mean_income = mean(income, na.rm = TRUE),
+    sd_income = sd(income, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n))
+
+income_stats
+```
+
+---
+
+## Naivní Bayesovské modely
+
+### Model 1: Pouze politické proměnné
+
+Nejprve odhadneme zjednodušený model, který využívá pouze politické charakteristiky respondentů.
+
+```{r model-1}
+nb_model_1 <- naiveBayes(
+  vaccines_are_safe ~ party + trump_approval,
+  data = potn
+)
+
+# Zobrazení modelu
+nb_model_1
+```
+
+**Co model obsahuje:**
+
+- **A-priori pravděpodobnosti** jednotlivých kategorií (odhadnuté z dat)
+- **Podmíněné pravděpodobnosti** pro kategorické prediktory (proporce)
+
+### Model 2: Rozšířený model
+
+Hlavním modelem analýzy je rozšířený naivní Bayesovský model, který kombinuje politické, demografické a socioekonomické prediktory.
+
+```{r model-2}
+nb_model_2 <- naiveBayes(
+  vaccines_are_safe ~ age + income + education +
+    party + trump_approval + robots,
+  data = potn
+)
+
+# Zobrazení modelu
+nb_model_2
+```
+
+**Co model obsahuje:**
+
+- **A-priori pravděpodobnosti** kategorií
+- **Podmíněné pravděpodobnosti** pro kategorické prediktory
+- **Parametry normálního rozdělení** (střední hodnota a směrodajná odchylka) pro kvantitativní prediktory `age` a `income`
+
+---
+
+## Predikce na konkrétních příkladech
+
+Podle postupu z učebnice (Section 14.1.3) otestujeme model na konkrétních hypotetických respondentech.
+
+### Příklad 1: Mladý vzdělaný demokrat
+
+```{r pred-example-1}
+# Profil: mladý člověk s vysokoškolským vzděláním, demokrat, nesouhlasí s Trumpem
+test_person_1 <- data.frame(
+  age = 28,
+  income = 80,
+  education = "Graduate Degree",
+  party = "Democrat",
+  trump_approval = "Strongly Disapprove",
+  robots = "Very likely"
+)
+
+# Posteriorní pravděpodobnosti jednotlivých kategorií
+pred_1_raw <- predict(nb_model_2, newdata = test_person_1, type = "raw")
+pred_1_class <- predict(nb_model_2, newdata = test_person_1)
+
+pred_1_raw
+```
+
+**Klasifikace:** Model klasifikuje tuto osobu jako **`r pred_1_class`** s posteriorní pravděpodobností `r round(max(pred_1_raw) * 100, 1)`%.
+
+### Příklad 2: Starší republikán
+
+```{r pred-example-2}
+# Profil: starší člověk, nižší vzdělání, republikán, souhlasí s Trumpem
+test_person_2 <- data.frame(
+  age = 65,
+  income = 45,
+  education = "High School Degree",
+  party = "Republican",
+  trump_approval = "Strongly Approve",
+  robots = "Not likely at all"
+)
+
+# Posteriorní pravděpodobnosti
+pred_2_raw <- predict(nb_model_2, newdata = test_person_2, type = "raw")
+pred_2_class <- predict(nb_model_2, newdata = test_person_2)
+
+pred_2_raw
+```
+
+**Klasifikace:** Model klasifikuje tuto osobu jako **`r pred_2_class`** s posteriorní pravděpodobností `r round(max(pred_2_raw) * 100, 1)`%.
+
+### Příklad 3: Středně starý nezávislý
+
+```{r pred-example-3}
+# Profil: středně starý nezávislý, neutrální postoje
+test_person_3 <- data.frame(
+  age = 45,
+  income = 60,
+  education = "Some College",
+  party = "Independent",
+  trump_approval = "Neither Approve nor Disapprove",
+  robots = "Somewhat likely"
+)
+
+# Posteriorní pravděpodobnosti
+pred_3_raw <- predict(nb_model_2, newdata = test_person_3, type = "raw")
+pred_3_class <- predict(nb_model_2, newdata = test_person_3)
+
+pred_3_raw
+```
+
+**Klasifikace:** Model klasifikuje tuto osobu jako **`r pred_3_class`** s posteriorní pravděpodobností `r round(max(pred_3_raw) * 100, 1)`%.
+
+---
+
+## Vyhodnocení modelů
+
+### Konfuzní matice pro oba modely
+
+#### Model 1: Pouze politické proměnné
+
+```{r confusion-1}
+# Přidání predikcí do datasetu
+potn <- potn %>%
+  mutate(pred_model_1 = predict(nb_model_1, newdata = .))
+
+# Konfuzní matice
+conf_mat_1 <- potn %>%
+  tabyl(vaccines_are_safe, pred_model_1) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 2) %>%
+  adorn_ns()
+
+conf_mat_1
+```
+
+#### Model 2: Rozšířený model
+
+```{r confusion-2}
+# Přidání predikcí
+potn <- potn %>%
+  mutate(pred_model_2 = predict(nb_model_2, newdata = .))
+
+# Konfuzní matice
+conf_mat_2 <- potn %>%
+  tabyl(vaccines_are_safe, pred_model_2) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 2) %>%
+  adorn_ns()
+
+conf_mat_2
+```
+
+**Interpretace:** Model má tendenci predikovat především nejčetnější kategorie *Strongly Agree* a *Somewhat Agree*. Méně zastoupené kategorie (zejména neutrální a nesouhlasné odpovědi) nejsou téměř nikdy správně klasifikovány. Tento výsledek je v souladu s výraznou nevyvážeností dat.
+
+---
+
+### Porovnání přesnosti modelů
+
+```{r model-comparison}
+# Celková přesnost Model 1
+accuracy_1 <- potn %>%
+  filter(!is.na(vaccines_are_safe) & !is.na(pred_model_1)) %>%
+  summarize(accuracy = mean(vaccines_are_safe == pred_model_1)) %>%
+  pull(accuracy)
+
+# Celková přesnost Model 2
+accuracy_2 <- potn %>%
+  filter(!is.na(vaccines_are_safe) & !is.na(pred_model_2)) %>%
+  summarize(accuracy = mean(vaccines_are_safe == pred_model_2)) %>%
+  pull(accuracy)
+```
+
+**Celková přesnost:**
+
+- **Model 1** (pouze politické proměnné): `r round(accuracy_1 * 100, 1)`%
+- **Model 2** (rozšířený model): `r round(accuracy_2 * 100, 1)`%
+
+Rozšířený model dosahuje o `r round((accuracy_2 - accuracy_1) * 100, 1)` procentních bodů vyšší přesnosti než zjednodušený model obsahující pouze politické proměnné.
+
+---
+
+## Křížová validace
+
+Pro posouzení generalizační schopnosti modelu použijeme 10násobnou křížovou validaci dle postupu uvedeného v kapitole 14 učebnice.
+
+```{r cv}
+set.seed(84735)
+
+cv_results <- naive_classification_summary_cv(
+  model = nb_model_2,
+  data = potn,
+  y = "vaccines_are_safe",
+  k = 10
+)
+
+cv_results$cv
+```
+
+**Interpretace:** Výsledky křížové validace jsou velmi podobné konfuzní matici vypočtené na celém vzorku. To naznačuje, že chování modelu není způsobeno přeučením, ale odráží skutečnou strukturu dat a dominanci jedné odpovědní kategorie.
+
+---
+
+## Závěr
+
+Naivní Bayesovský klasifikátor se ukázal jako vhodný nástroj pro vícetřídní analýzu postojů k bezpečnosti vakcín. Výsledky analýzy ukazují, že model je schopen velmi stabilně identifikovat dominantní souhlasné postoje, zejména kategorii Strongly Agree, která tvoří převážnou část datového souboru.
+
+**Hlavní zjištění:**
+
+1. **Rozšířený model** (Model 2) dosahuje celkové přesnosti `r round(accuracy_2 * 100, 1)`%, což je o `r round((accuracy_2 - accuracy_1) * 100, 1)` procentních bodů více než zjednodušený model obsahující pouze politické proměnné.
+
+2. **Konfuzní matice** i **10násobná křížová validace** dále ukazují, že model má výrazně omezenou schopnost rozlišovat méně četné kategorie odpovědí, jako jsou neutrální či nesouhlasné postoje. Tyto kategorie jsou ve většině případů chybně klasifikovány jako souhlasné, což je přímým důsledkem silně nevyváženého rozdělení odpovědí v datech a odpovídajících apriorních pravděpodobností jednotlivých tříd.
+
+3. **Predikce na konkrétních příkladech** ukázaly, že model je schopen zachytit rozdíly mezi různými demografickými a politickými profily respondentů, i když výsledná klasifikace je často ovlivněna dominancí kategorie "Strongly Agree".
+
+4. **Kvantitativní prediktory** (věk a příjem) vykazují relativně podobné průměry a směrodajné odchylky napříč kategoriemi, což naznačuje, že tyto proměnné nemusí být nejsilnějšími prediktory postoje k vakcínám v tomto datasetu.
+
+Přestože rozšířený model využívající politické, demografické i socioekonomické proměnné poskytuje konzistentní výsledky napříč validačními postupy, jeho prediktivní schopnost je do značné míry tažena právě dominancí jedné odpovědní kategorie. Analýza tak názorně demonstruje nejen praktickou aplikaci naivního Bayesovského přístupu na reálných sociálních datech, ale také důležitost kritického zohlednění struktury dat při interpretaci výsledků klasifikačních modelů.
+
+**Možná vylepšení:**
+
+- Využití technik pro práci s nevyváženými daty (např. převzorkování menšinových tříd)
+- Zkoušení alternativních klasifikačních metod, které lépe zvládají nevyvážené třídy
+- Agregace některých méně četných kategorií pro zjednodušení klasifikačního problému

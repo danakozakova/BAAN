@@ -1,0 +1,121 @@
+---
+title: "Exercise 5.19 - Beta-Geometric Model"
+subtitle: "Odvodenie Beta-Geometrického modelu"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Úvod
+
+Riešenie cvičenia 5.19 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-5#exercises-4) 
+
+Odvodenie Beta-Geometrického modelu a dokázanie konjugovanosti Beta prioru pre Geometrický dátový model.
+
+## Exercise 5.19: The Beta-Geometric Model
+
+> Consider the following new Bayesian model:
+> \begin{split}
+> Y|\theta & \sim \text{Geometric}(\theta) \\
+> \theta & \sim \text{Beta}(\alpha, \beta) \\
+> \end{split}
+> where the Geometric model has pmf $f(y|\theta) = \theta (1 - \theta)^{y - 1}$ for $y \in \{1,2,\ldots\}$.
+>
+> a. Derive the posterior model for $\theta$ given observed data $Y = y$. If possible, identify the name of the posterior model and its parameters.
+>
+> b. Is the Beta model a conjugate prior for the Geometric data model?
+
+## Solution
+
+### a. Odvodenie posteriórneho modelu pre $\theta$
+
+#### Krok 1: Definícia apriórneho modelu (Beta rozdelenie)
+
+> Apriórny model pre parameter $\theta$ je Beta rozdelenie:
+> \begin{equation}
+> \theta \sim \text{Beta}(\alpha, \beta)
+> \end{equation}
+
+> Hustota pravdepodobnosti (pdf) Beta rozdelenia je:
+> \begin{equation}
+> f(\theta) = \frac{\Gamma(\alpha + \beta)}{\Gamma(\alpha)\Gamma(\beta)} \theta^{\alpha-1}(1-\theta)^{\beta-1} \;\; \text{pre } \theta \in [0,1]
+> \end{equation}
+> Pri ďalšom odvodzovaní aposteriórnej hustoty stačí používať iba **jadro** Beta rozdelenia, t.j. môžeme vypustiť časti funkcie, ktoré nezávisia od parametra $theta$:
+> \begin{equation}
+> f(\theta) \propto \theta^{\alpha-1}(1-\theta)^{\beta-1}
+> \end{equation}
+
+#### Krok 2: Vierohodnostný model (Geometrické rozdelenie)
+Geometrické rozdelenie modeluje počet pokusov potrebných na dosiahnutie prvého úspechu, kde $\theta$ je pravdepodobnosť úspechu v jednom pokuse. <br>
+> Funkcia hustoty $pmf$ Geometrického rozdelenia s pravdepodobnosťou $theta$ je:
+> \begin{equation}
+f(y|\theta) = \theta (1 - \theta)^{y - 1} \;\; \text{pre } y \in \{1,2,\ldots\}
+> \end{equation}
+
+> Po pozorovaní dát $Y = y$ máme vierohodnostnú funkciu (likelihood). Tvar funkcie je rovnaký ako pre funkciu hustoty, mení sa len chápanie paramerov (tu je parametrom $theta$).
+> \begin{equation}
+L(\theta|y) = \theta(1-\theta)^{y-1} \;\; \text{pre } \theta \in [0,1]
+\end{equation}
+
+#### Krok 3: Výpočet jadra posteriórneho modelu
+Podľa Bayesovej vety je posteriórna hustota pravdepodobnosti pre $\theta$ proporcionálna k súčinu apriórnej hustoty a vierohodnostnej funkcie:
+> \begin{equation}
+> f(\theta|y) \propto f(\theta) \cdot L(\theta|y)
+> \end{equation}
+
+> Ako apriórnu hustotu dosadíme len jadro (stačí to) a vierohodnosť, potom poupravujeme: 
+> \begin{split}
+> f(\theta|y) & \propto \theta^{\alpha-1}(1-\theta)^{\beta-1} \cdot \theta(1-\theta)^{y-1} = \\
+>  & = \theta^{\alpha-1} \cdot \theta^1 \cdot (1-\theta)^{\beta-1} \cdot \theta(1-\theta)^{y-1} = \\  
+> & = \theta^{\alpha-1+1} \cdot (1-\theta)^{\beta-1+y-1} = \\
+> & = \theta^{\alpha} \cdot (1-\theta)^{\beta+y-2} \\
+> \end{split}
+
+#### Krok 4: Odvodenie rozdelenia pre posteriórny model
+> Čiže apriórna hustota pre **$Beta(\alpha, \beta)$** mala jadro:
+> \begin{equation}
+> f(\theta) \propto \theta^{\alpha-1}(1-\theta)^{\beta-1}
+> \end{equation}
+
+> Posteriórna hustota má jadro: 
+> \begin{equation}
+> f(\theta) \propto \theta^{\alpha} \cdot (1-\theta)^{\beta+y-2}
+> \end{equation}
+> Preto parametre pre posteriórnu hustotu sú: <br>
+> <ul> <li>$\alpha$ = $\alpha$ + 1 </li>
+> <li> $\beta$ = $\beta + y - 2 + 1$ = $\beta + y - 1$ </li></ul>
+> To zodpovedá **Beta rozdeleniu** s parametrami $(\alpha+1, \beta+y-1)$.
+
+**Posteriórny model pre $\theta$ je teda:**
+
+> \begin{equation}
+> \boxed{\theta|y \sim \text{Beta}(\alpha + 1, \; \beta + y - 1)}
+> \end{equation}
+
+### b. Je Beta model konjugovaný prior?
+Beta model **je konjugovaný apriórny model** pre Geometrický dátový model.
+Lebo posteriórny model patrí do tej istej rodiny rozdelení, je to tiež Beta model (s inými parametrami).
+
+**Aktualizácia parametrov:**
+
+> Po dátach $Y = y$ (počet pokusov do prvého úspechu) sa parametre aktualizujú:
+> <ul><li> Parameter $\alpha$ sa aktualizuje na: $\alpha \rightarrow \alpha + 1$ </li>
+> <li> Parameter $\beta$ sa aktualizuje: $\beta \rightarrow \beta + y - 1$ </li>
+> <li> Prior: $\text{Beta}(\alpha, \beta) \rightarrow \text{Beta}(\alpha + 1, \beta + y - 1)$ </li></ul>
+
+**Interpretácia parametrov:**
+
+<ul><li>$\alpha$ reprezentuje počet predchádzajúcich úspechov</li>
+   <li>$\beta$ reprezentuje počet predchádzajúcich neúspechov</li>
+   <li>Po pozorovaní $y$ pokusov s jedným úspechom na konci<br>
+     - pridáme 1 úspech ($\alpha + 1$) <br>
+     - pridáme $y-1$ neúspechov pred úspechom ($\beta + y - 1$)</li></ul>

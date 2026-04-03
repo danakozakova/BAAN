@@ -1,0 +1,170 @@
+---
+title: 'Předmět: Bayesiánská analýza (MPE_BAAN)'
+subtitle: Třetí úkol, příklad 3 (12.10) - skupina 13
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+    authors: Dana Kozáková, Daniel Navrátil, Romana Vystrčilová, Marek Hrazdíra
+  pdf_document:
+    toc: true
+authors: Dana Kozáková, Daniel Navrátil, Romana Vystrčilová, Marek Hrazdíra
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+
+library(bayesrules)
+library(tidyverse)
+library(rstan)
+library(rstanarm)
+library(bayesplot)
+library(tidybayes)
+library(janitor)
+library(broom.mixed)
+
+```
+# PŘÍKLAD 3
+
+# Exercise 12.10 (Open exercise: AirBnB)
+
+> The *airbnb_small* data in the bayesrules package contains information on AirBnB rentals in Chicago. This data was originally collated by Trinh and Ameri (2016) and distributed by Legler and Roback (2021). In this open-ended exercise, build, interpret, and evaluate a model of the number of *reviews* an AirBnB property has by its *rating*, *district*, *room_type*, and the number of guests it *accommodates*.
+
+
+## Použitá data a proměnné
+
+**Závislá proměnná:**
+- `reviews` – počet hodnocení
+
+**Prediktory:**
+- `rating` – rating ubytování
+- `district` – městská část
+- `room_type` – typ pokoje
+- `accommodates` – kapacita (maximální možný počet hostů)
+
+## Načtení dat
+```{r}
+# Načtení dat
+data("airbnb_small")
+```
+
+## Vizualizace dat
+```{r}
+ggplot(airbnb_small, aes(x = reviews)) + 
+  geom_histogram(color = "white")
+```
+**Interpretace:** Můžeme si všimnout, že data jsou pravostraně zešikmená. Většina ubytování má nízký počet hodnocení. U rostoucího počtu recenzí četnosti rychle klesají.
+
+```{r}
+ggplot(airbnb_small, aes(x = district ,y = reviews)) + 
+  geom_boxplot(outliers = FALSE)
+```
+**Interpretace:** Při rozdělení na městské části si můžeme všimnout, že podle grafu nejvíce recenzí mají byty v části North, nejméně pak v části Northwest.
+
+```{r}
+ggplot(airbnb_small, aes(x = room_type ,y = reviews)) + 
+  geom_boxplot(outliers = FALSE)
+```
+**Interpretace:** Podle typu pokojů to vypadá, že nejvíce recenzí má typ Private room a nejméně Shared room.
+
+```{r}
+airbnb_small |>
+  mutate(
+    rating = factor(rating)
+  ) |>
+  ggplot(aes(x = rating ,y = reviews)) + 
+  geom_boxplot(outliers = FALSE)
+```
+**Interpretace:** Při pohledu na rozdělení podle ratingu se zdá, že čím lepší hodnocení hotel má, tím více má recenzí.
+
+```{r}
+airbnb_small |>
+  mutate(
+    accommodates = factor(accommodates)
+  ) |>
+  ggplot(aes(x = accommodates ,y = reviews)) + 
+  geom_boxplot(outliers = FALSE)
+```
+**Interpretace:** Proměnná accommodates obsahuje kategorie 1-16 a při pohledu na graf nelze jednoduše určit vztah mezi touto proměnnou a počtem recenzí.
+
+## Sestaveni modelu
+Následně je potřeba vybrat, jaký model použijeme. Normální model nepřipadá v úvahu, protože data jsou zkosená. Model by navíc předpovídal i záporné hodnoty, což pro počet hodnocení nedává smysl. Na výběr tedy máme mezi Poissonovým a Negativním-binomickým modelem. Poissonův model se použije, pokud Var(Y) ≈ E(Y). Negativní binomický model bude lepší volbou, pokud Var(Y) > E(Y).
+
+```{r}
+mean(airbnb_small$reviews)
+var(airbnb_small$reviews)
+```
+Průměr vychází zhruba 27 a variabilita okolo 1225, jde o data s velkou variabilitou a použijeme tedy negativní-binomický model.
+
+```{r}
+airbnb_small <- airbnb_small |>
+  mutate(
+    district  = factor(district),
+    room_type = factor(room_type)
+  )
+
+airbnb_negbin_sim <- stan_glm(
+  reviews ~ rating + district + room_type + accommodates, 
+  data = airbnb_small,
+  family = neg_binomial_2,
+  prior_intercept = normal(3.3, 5, autoscale = TRUE),
+  prior = normal(0, 2.5, autoscale = TRUE), 
+  prior_aux = exponential(1, autoscale = TRUE),
+  chains = 4, iter = 5000*2, seed = 84735
+)
+
+tidy(airbnb_negbin_sim, conf.int = TRUE, conf.level = 0.95)
+```
+
+**Interpretace koeficientů:**
+**Rating** 0.24 -> exp(0.24) = 1.27 -> každé zvýšení ratingu o 1 bod zvýší očekávaný počet hodnocení zhruba o 27 %.
+V proměnné **district** funguje **Far North** jako referenční kategorie.
+Městská část **North** 0.185 -> exp(0.185) = 1.2 -> byty v městské části North mají průměrně o 20 % víc recenzí než byty v části Far North.
+Městská část **Northwest** -0.17 -> exp(-0.17) = 0.84 -> byty na severozápadě mají průměrně o 16 % méně recenzí než byty v referenční oblasti.
+V proměnné **room_type** byla jako referenční kategorie použita **Entire home/apt**.
+Typ **Private room** 0.224 -> exp(0.224) = 1.25 -> Private room má asi o 25 % více recenzí než Entire home/apt.
+Typ **Shared room** -0.439 -> exp(-0.439) = 0.64 -> Shared room má zhruba o 36 % méně recenzí než Entire home/apt.
+**accommodates** 0.0447 -> exp(0.0447) = 1.046 -> Navýšení kapacity o jednu osobu zvyšuje počet recenzí průměrně o 4.6 %.
+
+## Hodnocení modelu
+### Je model férový?
+Data byla sesbírána Trinhem a Amerim v roce 2016. Jejich účelem podle přiloženého zdroje bylo provést projekt do statistického předmětu na univerzitě. Vzhledem k tomu, že data sbírali zřejmě pouze pro akademické účely, předpokládám, že jejich analýza nemohla nijak ovlivnit společnost, a neměli tedy motivaci s daty jakkoli manipulovat.
+
+### Jak špatný je model?
+```{r}
+pp_check(airbnb_negbin_sim) +
+  xlab("reviews")
+```
+
+**Interpretace:** posterior predictive check ukazuje, že křivka modelu poměrně odpovídá pozorovaným datům. Můžeme si však všimnout, že model systematicky podhodnocuje malé hodnoty. Ve střední a v pravé části grafu již model sedí dobře.
+
+### Jak přesné jsou predikce modelu?
+```{r}
+set.seed(84735)
+predictions <- posterior_predict(airbnb_negbin_sim)
+dim(predictions)
+
+ppc_intervals(y = airbnb_small$reviews, yrep = predictions, x = airbnb_small$accommodates, 
+              prob = 0.5, prob_outer = 0.95)
+
+set.seed(84735)
+prediction_summary(airbnb_negbin_sim, data = airbnb_small)
+```
+**Interpretace:** Typický rozdíl MAE mezi pozorovanými daty a jejich predikcemi je 18 recenzí. Scaled MAE je potom 0.68. Do 50 % intervalu spadá zhruba polovina hodnot (51.2 %). Do 95 % intervalu spadá 96 % hodnot. Dalo by se tedy říct, že predikce modelu jsou relativně přesné.
+
+## Závěr
+V této úloze jsme modelovali počet recenzí k jednotlivým ubytováním na AirBnB v Chicagu. Podle vlastností zkoumaných dat jsem zvolil negativní-binomický model.
+Model ukázal následující vztahy: 
+Ubytování s vyšším ratingem měly větší počet pozorování.
+Ubytování v části North měly nejvíce hodnocení, následovala část Far North a nejméně hodnocení měly ubytování v části Northwest.
+Nejvíce hodnocení měly soukromé pokoje, dále celý dům/apartmá a nejméně sdílený pokoj.
+S větší kapacitou ubytování mírně rostl i počet recenzí.

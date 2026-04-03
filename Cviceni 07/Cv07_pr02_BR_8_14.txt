@@ -1,0 +1,142 @@
+# Clear variables and console
+ rm(list = ls())
+ cat("\014")
+ 
+# Load packages
+ library(bayesrules)
+ library(tidyverse)
+ library(rstan)
+ library(bayesplot)
+ library(broom.mixed)
+ library(janitor) 
+ 
+# 8.14
+ 
+data("pulse_of_the_nation")
+
+pulse_of_the_nation %>% 
+  group_by(climate_change) %>% 
+  tally()
+
+plot_beta_binomial(alpha = 1, beta = 2, y = 150, n = 1000)
+
+
+# 0.025th & 0.975th quantiles of the Beta(151,852) posterior
+a_post = 1+150
+b_post = 2+1000-150  
+qbeta(c(0.025, 0.975), a_post, b_post)
+
+# 8.15
+# H_0 pi <= 0.1; H_1 pi > 0.1
+
+post_prob <- 1-pbeta(0.1, a_post, b_post)
+post_prob
+
+# Posterior odds
+post_odds <- post_prob / (1 - post_prob)
+post_odds
+
+# Prior probability that pi > 0.1
+prior_prob <- pbeta(0.1, 1, 2, lower.tail = FALSE)
+prior_prob
+
+# Prior odds
+prior_odds <- prior_prob / (1 - prior_prob)
+prior_odds
+
+# Bayes factor
+BF <- post_odds / prior_odds
+BF
+
+# 8.16
+
+# STEP 1: DEFINE the model
+climate_model <- "
+  data {
+    int<lower = 0, upper = 1000> Y;
+  }
+  parameters {
+    real<lower = 0, upper = 1> pi;
+  }
+  model {
+    Y ~ binomial(1000, pi);
+    pi ~ beta(1, 2);
+  }
+"
+
+# STEP 2: SIMULATE the posterior
+#climate_sim <- stan(model_code = climate_model, data = list(Y = 150), 
+#                chains = 4, iter = 10000*2, seed = 84735)
+
+#save(climate_sim,file = "BR_8_16_sim.RData")
+load("BR_8_16_sim.RData")
+
+# Parallel trace plots & density plots
+mcmc_trace(climate_sim, pars = "pi", size = 0.5) + 
+  xlab("iteration")
+mcmc_dens_overlay(climate_sim, pars = "pi")
+
+# Autocorrelation plot
+mcmc_acf(climate_sim, pars = "pi")
+
+
+# Markov chain diagnostics
+rhat(climate_sim, pars = "pi")
+neff_ratio(climate_sim, pars = "pi")
+
+# 8.17
+# The actual Beta(..,..) posterior
+plot_beta(alpha = a_post, beta = b_post) + 
+  lims(x = c(0, 0.35))
+
+# MCMC posterior approximation
+mcmc_dens(climate_sim, pars = "pi") + 
+  lims(x = c(0,0.35))
+
+tidy(climate_sim, conf.int = TRUE, conf.level = 0.95)
+
+# Shade in the middle 95% interval
+mcmc_areas(climate_sim, pars = "pi", prob = 0.95)
+
+# Store the 4 chains in 1 data frame
+climate_chains_df <- as.data.frame(climate_sim, pars = "lp__", include = FALSE)
+dim(climate_chains_df)
+
+# Calculate posterior summaries of pi
+climate_chains_df %>% 
+  summarize(post_mean = mean(pi), 
+            post_median = median(pi),
+            post_mode = sample_mode(pi),
+            lower_95 = quantile(pi, 0.025),
+            upper_95 = quantile(pi, 0.975))
+
+# Tabulate pi values that are above 0.10
+climate_chains_df %>% 
+  mutate(exceeds = pi > 0.10) %>% 
+  tabyl(exceeds)
+
+# 8.18
+# Set the seed
+set.seed(1)
+
+# Predict a value of Y' for each pi value in the chain
+# Predicting outcomes of 100 adults surveyed
+climate_chains_df <- climate_chains_df %>% 
+  mutate(y_predict = rbinom(length(pi), size = 100, prob = pi))
+
+# Check it out
+climate_chains_df %>% 
+  head(3)
+
+# Plot the predictions
+ggplot(climate_chains_df, aes(x = y_predict)) + 
+  stat_count()
+
+climate_chains_df %>% 
+  summarize(mean = mean(y_predict),
+            lower_80 = quantile(y_predict, 0.1),
+            upper_80 = quantile(y_predict, 0.9))
+
+climate_chains_df %>% 
+  mutate(prob_approx = y_predict >= 20) %>% 
+  tabyl(prob_approx)

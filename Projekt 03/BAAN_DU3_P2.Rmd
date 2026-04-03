@@ -1,0 +1,533 @@
+---
+title: 'Předmět: Bayesiánská analýza (MPE_BAAN)'
+subtitle: Třetí úkol, příklad 2 (11.10 - 11.14) - skupina 13
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+    authors: Dana Kozáková, Daniel Navrátil, Romana Vystrčilová, Marek Hrazdíra
+  pdf_document:
+    toc: true
+authors: Dana Kozáková, Daniel Navrátil, Romana Vystrčilová, Marek Hrazdíra
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+
+library(bayesrules)
+library(rstanarm)
+library(bayesplot)
+library(tidyverse)
+library(broom.mixed)
+library(tidybayes)
+
+```
+
+# ÚLOHA 2
+
+> In the next exercises you will use the `penguins_bayes` data in the
+> **bayesrules** package to build various models of penguin
+> `body_mass_g`. Throughout, we’ll utilize weakly informative priors and
+> a basic understanding that the average penguin weighs somewhere
+> between 3,500 and 4,500 grams. Further, one predictor of interest is
+> penguin `species`: Adelie, Chinstrap, or Gentoo. We’ll get our first
+> experience with a 3-level predictor like this in Chapter 12. If you’d
+> like to work with only 2 levels as you did in Chapter 11, you can
+> utilize the `penguin_data` which includes only Adelie and Gentoo
+> penguins:
+
+```{r data-filter, echo=FALSE}
+
+data(penguins_bayes)
+
+summary(penguins_bayes %>% select(body_mass_g, flipper_length_mm, bill_length_mm, bill_depth_mm, species))
+
+penguins_data <- penguins_bayes %>% 
+  filter(species %in% c("Adelie", "Gentoo"))
+
+# Zde pracujeme pouze se dvěma druhy tučňáků, jak bylo uvedeno v úvodu daných úloh.
+
+```
+
+# Příklad 11.10 (Penguins! Main effects)
+
+> Let’s begin our analysis of penguin `body_mass_g` by exploring its
+> relationship with `flipper_length_mm` and `species`. <br>
+> **a)** Plot and summarize the observed relationships among these three variables. <br>
+> **b)** Use `stan_glm()` to simulate a posterior Normal regression model of
+> `body_mass_g` by `flipper_length_mm` and `species`, without an interaction term. <br>
+> **c)** Create and interpret both visual and numerical diagnostics of your MCMC simulation. <br>
+> **d)** Produce a `tidy()` summary of this model. Interpret the non-intercept
+> coefficients' posterior median values in context. <br> e) Simulate,
+> plot, and describe the posterior predictive model for the body mass of
+> an Adelie penguin that has a flipper length of 197.
+
+## a) Pozorované vztahy mezi (dvěma) proměnnými
+
+```{r 11.10_a, echo=FALSE}
+
+penguins_data %>% drop_na(body_mass_g, flipper_length_mm, species) %>%
+    ggplot(aes(x = flipper_length_mm, y = body_mass_g, color = species)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = "lm", se = F) + 
+    labs(title = "Vztah tělesné hmotnosti a délky ploutve podle druhu",
+         x = "Délka ploutve (mm)",
+         y = "Tělesná hmotnost (g)") + theme_minimal()
+
+```
+
+**Sumarizace:** V rámci obou druhů existuje silný pozitivní lineární
+vztah. Zatímco tučňáci Gentoo jsou průměrně těžší, druh Adelie vykazuje
+menší průměrnou délku ploutve. Regresní přímky napříč oběma druhy mají
+obdobný sklon, tudíž vztah mezi hmotností tučňáka a délkou jeho ploutve
+je pro oba druhy velmi podobný.
+
+## b) Posteriorní normální regresní model
+
+```{r 11.10_b, echo=TRUE}
+
+posterior_penguins_1 <- stan_glm(body_mass_g ~ flipper_length_mm + species,
+                            data = penguins_data, family = gaussian,
+                            prior = normal(0, 2.5, autoscale = T),
+                            prior_aux = exponential(1, autoscale = T),
+                            prior_intercept = normal(location = 4000, scale = 1000, autoscale = T),
+                            chains = 4, iter = 5000*2, refresh = 0, seed = 12345)
+
+```
+
+## c) Interpretace MCMC diagnostik
+
+```{r 11.10_c, echo=FALSE}
+
+mcmc_trace(posterior_penguins_1,
+           pars = c("(Intercept)", "flipper_length_mm", "speciesGentoo"), size = 0.1)
+
+mcmc_dens_overlay(posterior_penguins_1)
+
+mcmc_acf(posterior_penguins_1)
+
+neff_ratio(posterior_penguins_1)
+
+rhat(posterior_penguins_1)
+
+```
+
+**Interpretace diagnostik:** Řetězce konvergovaly ke stejnému
+posteriornímu rozdělení dle hodnoty *rhat* blízko 1. V datech sice
+existuje jistá autokorelace, jelikož hodnoty *neff_ratia* jsou zhruba
+0.5, nicméně i přesto máme dostatečný počet nezávislých odhadů pro další
+analýzu.
+
+## d) Shrnutí a interpretace koeficientů
+
+```{r 11.10_d, echo=FALSE}
+
+tidy_sumarizace <- tidy(posterior_penguins_1, effects = c("fixed", "aux"), conf.int = T, conf.level = 0.9)
+
+```
+
+**Interpretace koeficientů:** Medián pro délku ploutve je *42.45 g/mm*,
+což znamená, že pokud dojde ke zvýšení ploutve o 1 mm, tak tělesná
+hmotnost se zvýší právě o danou hodnotu mediánu. Interval spolehlivosti
+neobsahuje nulu, tudíž délka ploutve a hmotnost mají pozitivní
+asociaci.\n Tučňák Gentoo má průměrně o *217.57* gramů vyšší váhu než
+druh Adelie, jelikož interval spolehlivosti opět neobsahuje nulu, tak
+tučňáci Gentoo jsou v průměru skutečně významně těžší.
+
+## e) Posteriorní prediktivní model
+
+```{r 11.10_e, echo=FALSE}
+
+prediction <- posterior_predict(posterior_penguins_1,
+                                newdata = data.frame(flipper_length_mm = 197, species = "Adelie"))
+
+mcmc_areas(prediction) + xlab("body_mass_g")
+
+```
+
+**Interpretace predikce:** Model nám predikuje, že nejpravděpodobnější hmotnost tohoto tučňáka se pohybuje okolo **4 000 gramů**. Celá křivka pokrývá poměrně široké rozmezí (cca 3 000 až 5 000 g). To je způsobeno tím, že predikujeme hodnotu pro jednoho konkrétního jedince, nikoliv průměr populace, a musíme tak do modelu zahrnout i přirozenou variabilitu, kterou model neodkáže vysvětlit pouze délkou ploutve a druhem.
+
+# Příklad 11.11 (Penguins! Interaction)
+
+> Building from the previous exercise, our next goal is to model
+> `body_mass_g` by `flipper_length_mm` and `species` with an interaction
+> term between these two predictors. <br>
+> **a)** Use `stan_glm()` to simulate the posterior for this model, with four chains at 10,000
+> iterations each. <br>
+> **b)** Simulate and plot 50 posterior model lines. Briefly describe what you learn from this plot. <br>
+> **c)** Produce a `tidy()` summary for this model. Based on the summary, do you have
+> evidence that the interaction terms are necessary for this model?
+> Explain your reasoning.
+
+## a) Posteriorní model
+
+```{r 11.11_a, echo=TRUE}
+
+posterior_penguins_2 <- stan_glm(body_mass_g ~ flipper_length_mm + species + flipper_length_mm:species,
+                                 data = penguins_data, family = gaussian,
+                                 prior = normal(0, 2.5, autoscale = T),
+                                 prior_intercept = normal(location = 4000, scale = 1000, autoscale = T),
+                                 prior_aux = exponential(1, autoscale = TRUE),
+                                 chains = 4, iter = 10000*2, refresh = 0, seed = 12345)
+
+```
+
+## b) Posteriorní modelové přímky
+
+```{r 11.11_b, echo=FALSE}
+
+predictive_penguins <- penguins_data %>% select(flipper_length_mm, species) %>%
+    distinct() %>% arrange(flipper_length_mm)
+
+lines_50 <- drop_na(predictive_penguins) %>% add_fitted_draws(posterior_penguins_2, n = 50)
+
+ggplot(penguins_data, aes(x = flipper_length_mm, y = body_mass_g, color = species)) +
+    geom_point(alpha = 0.5) +
+    geom_line(data = lines_50, aes(y = .value, group = interaction(.draw, species)), alpha = 0.15) +
+    labs(title = "Posteriorní regresní přímky",
+         subtitle = "body_mass_g ~ flipper_length_mm * species",
+         x = "Délka ploutve (mm)", y = "Tělesná hmotnost (g)") + theme_minimal()
+
+```
+
+**Sumarizace:** Regresní přímky již nejsou zcela paralelní napříč druhy,
+tudíž vliv délky ploutve na tělesnou hmotnost závisí na pozorovaném
+druhu tučňáka.
+
+## c) Souhrn, interakční členy
+
+```{r 11.11_c, echo=FALSE}
+
+tidy_sumarizace2 <- tidy(posterior_penguins_2, effects = c("fixed", "aux"))
+
+posterior_interval(posterior_penguins_2, prob = 0.95, 
+                   pars = c("flipper_length_mm:speciesGentoo"))
+
+```
+
+**Interpretace:** Pokud budeme uvažovat čistě jen interakční člen mezi
+dvěma proměnnými, tak interval spolehlivosti neobsahuje
+0, tudíž pro vysvětlování hmotnosti tučňáka má jistý přínos.
+
+# Příklad 11.12 (Penguins! 3 predictors)
+
+> Next, let’s explore a model of `body_mass_g` by three predictors:
+> `flipper_length_mm`, `bill_length_mm`, and `bill_depth_mm`. Do not use
+> any interactions in this model. <br>
+> **a)** Use `stan_glm()` to simulate the posterior for this model. <br>
+> **b)** Use `posterior_interval()` to
+> produce 95% credible intervals for the model parameters. <br>
+> **c)** Based on these 95% credible intervals, when controlling for the other
+> predictors in the model, which predictors have a significant positive
+> association with body mass, which have significant negative
+> association with body mass, and which have no significant association?
+
+## a) Simulace modelu
+
+```{r 11.12_a, echo=TRUE}
+
+posterior_penguins_3 <- stan_glm(body_mass_g ~ flipper_length_mm + bill_length_mm + bill_depth_mm,
+                                 data = penguins_data,
+                                 family = gaussian,
+                                 prior_intercept = normal(4000, 1000),
+                                 prior = normal(0, 2.5, autoscale = TRUE),
+                                 prior_aux = exponential(1, autoscale = TRUE),
+                                 chains = 4, iter = 5000*2, refresh = 0, seed = 12345)
+
+```
+
+## b) Posteriorní intervaly spolehlivosti (95%)
+
+```{r 11.12_b, echo=FALSE}
+
+posterior_interval(posterior_penguins_3, prob = 0.95)
+
+```
+
+## c) Interpretace asociací s prediktory
+
+**Pri kontrole ostatných prediktorov:**
+
+-   **Pozitivní asociace:** `flipper_length_mm`, `bill_length_mm`,
+    `bill_depth_mm`
+-   **Negativní asociace:** *žádná*
+-   **Žádná signifikantní asociace:** *Ano, jelikož žádný interval
+    spohlivosti pro prediktor v sobě nezahrnuje nulu.*
+
+# Příklad 11.13 (Penguins! Comparing models)
+
+> Consider four possible models of `body_mass_g`: <br><br> \| model \|
+> formula \| <br> \| 1 \| `body_mass_g ~ flipper_length_mm` \| <br> \| 2
+> \| `body_mass_g ~ species` \| <br> \| 3 \|
+> `body_mass_g ~ flipper_length_mm + species` \| <br> \| 4 \|
+> `body_mass_g ~ flipper_length_mm + bill_length_mm + bill_depth_mm` \|
+> <br> <br>
+> **a)** Simulate these four models using the `stan_glm()` function. <br>
+> **b)** Produce and compare the `pp_check()` plots for the
+> four models. <br>
+> **c)** Use 10-fold cross-validation to assess and
+> compare the posterior predictive quality of the four models using the
+> `prediction_summary_cv()`. NOTE: We can only predict body mass for
+> penguins that have complete information on our model predictors. Yet
+> two penguins have NA values for multiple of these predictors. To
+> remove these two penguins, we `select()` our columns of interest
+> before removing penguins with NA values. This way, we don't throw out
+> penguins just because they're missing information on variables we
+> don't care about. <br>
+> **d)** Evaluate and compare the ELPD posterior
+> predictive accuracy of the four models. <br>
+> **e)** In summary, which of these four models is "best?" Explain.
+
+## a) Definice a simulace modelů
+
+```{r 11.13_a, echo=TRUE}
+
+# Model 1: body_mass_g ~ flipper_length_mm
+
+model_1 <- stan_glm(body_mass_g ~ flipper_length_mm,
+                    data = penguins_data, family = gaussian,
+                    prior_intercept = normal(4000, 1000),
+                    prior = normal(0, 2.5, autoscale = T),
+                    prior_aux = exponential(1,autoscale = T),
+                    chains = 4, iter = 5000*2, seed = 12345, refresh = 0)
+
+# Model 2: body_mass_g ~ species
+
+model_2 <- stan_glm(body_mass_g ~ species,
+                    data = penguins_data, family = gaussian,
+                    prior_intercept = normal(4000, 1000),
+                    prior = normal(0, 2.5, autoscale = T),
+                    prior_aux = exponential(1,autoscale = T),
+                    chains = 4, iter = 5000*2, seed = 12345, refresh = 0)
+
+# Model 3: body_mass_g ~ flipper_length_mm + species
+
+model_3 <- stan_glm(body_mass_g ~ flipper_length_mm + species,
+                    data = penguins_data, family = gaussian,
+                    prior_intercept = normal(4000, 1000),
+                    prior = normal(0, 2.5, autoscale = T),
+                    prior_aux = exponential(1,autoscale = T),
+                    chains = 4, iter = 5000*2, seed = 12345, refresh = 0)
+
+# Model 4: body_mass_g ~ flipper_length_mm + bill_length_mm + bill_depth_mm
+
+model_4 <- stan_glm(body_mass_g ~ flipper_length_mm + bill_length_mm + bill_depth_mm,
+                    data = penguins_data, family = gaussian,
+                    prior_intercept = normal(4000, 1000),
+                    prior = normal(0, 2.5, autoscale = T),
+                    prior_aux = exponential(1,autoscale = T),
+                    chains = 4, iter = 5000*2, seed = 12345, refresh = 0)
+
+```
+
+## b) Posteriorní prediktivní kontroly (checks)
+
+```{r 11.13_b, echo=FALSE}
+
+pp_check(model_1) + ggtitle("M1: body_mass_g ~ flipper_length_mm")
+pp_check(model_2) + ggtitle("M2: body_mass_g ~ species")
+pp_check(model_3) + ggtitle("M3: body_mass_g ~ flipper_length_mm + species")
+pp_check(model_4) + ggtitle("M4: body_mass_g ~ flipper_length_mm + bill_length_mm + bill_depth_mm")
+
+```
+
+**Porovnání:** Z vizuálního porovnání grafů je patrné, že modely 3 a 4
+vykazují nejlepší shodu s reálnými daty, neboť jejich simulované křivky
+($y_{rep}$) věrně kopírují bimodalitu pozorovaného rozdělení (**y**).
+Jednoduché modely 1 a 2 sice zachycují obecný trend, ale hůře postihují
+specifické vrcholy rozdělení dané rozdílnou hmotností druhů Adelie a
+Gentoo. Mezi komplexnějšími modely 3 a 4 není vizuálně výrazný rozdíl,
+což naznačuje, že pro věrnou simulaci dat je klíčová kombinace druhu a
+délky ploutve, zatímco přidání rozměrů zobáku v modelu 4 již vizuálně
+zásadní zlepšení nepřináší.
+
+## c) 10-násobná křížová validace
+
+```{r 11.13_c, echo=FALSE}
+
+penguins_complete <- penguins_data %>% select(body_mass_g, flipper_length_mm, bill_length_mm, bill_depth_mm, species) %>% na.omit()
+
+set.seed(12345)
+
+cv_1 <- prediction_summary_cv(model = model_1, data = penguins_complete, k = 10)
+
+cv_2 <- prediction_summary_cv(model = model_2, data = penguins_complete, k = 10)
+
+cv_3 <- prediction_summary_cv(model = model_3, data = penguins_complete, k = 10)
+
+cv_4 <- prediction_summary_cv(model = model_4, data = penguins_complete, k = 10)
+
+# Spojení, porovnání modelů a jejich seřazení dle velikosti průměrné absolutní chyby
+
+cv_comparison <- bind_rows(cv_1$cv %>% mutate(model = "Model 1"),
+                           cv_2$cv %>% mutate(model = "Model 2"),
+                           cv_3$cv %>% mutate(model = "Model 3"),
+                           cv_4$cv %>% mutate(model = "Model 4")) %>%
+    select(model, mae, mae_scaled, within_50, within_95) %>% arrange(mae)
+
+```
+
+**Interpretace křížové validace:** Z výsledků křížové validace vychází
+vítězně Model 4, který dosáhl nejnižší chyby predikce (**MAE = 223,1
+g**) a téměř ideálního pokrytí intervalů spolehlivosti (**94,5 %**).
+Překvapivě si jednoduchý Model 1 vedl lépe než Model 3, což naznačuje,
+že délka ploutve je silným prediktorem a samotné přidání druhu model
+zbytečně zkomplikovalo, tj. problém overfittingu. Rozměry zobáku v
+Modelu 4 však přináší unikátní informaci, která chybu výrazně snižuje, a
+proto je tento model nejlepší variantou.
+
+## d) ELPD porovnání
+
+```{r 11.13_d, echo=FALSE}
+
+set.seed(12345)
+
+loo_1 <- loo(model_1)
+loo_2 <- loo(model_2)
+loo_3 <- loo(model_3)
+loo_4 <- loo(model_4)
+
+loo_compare(loo_1, loo_2, loo_3, loo_4)
+
+```
+
+**Interpretace ELPD:** Porovnání modelů pomocí ELPD potvrzuje dominanci
+Modelu 4, který se umístil na prvním místě. Rozdíl mezi ním a druhým
+Modelem 3 je `elpd_diff` = **-40,0** se standardní chybou `se_diff` =
+**7,4**. Jelikož je rozdíl výrazně větší než dvojnásobek standardní
+chyby, můžeme s jistotou říci, že Model 4 má signifikantně lepší
+prediktivní schopnost než tři ostatní modely. Zároveň vidíme, že mezi
+Modelem 3 (*-40,0*) a Modelem 1 (*-41,0*) je rozdíl zanedbatelný, což
+znovu naznačuje, že v kontextu ELPD nepřináší modelování druhu
+(`species`) nad rámec délky ploutve (`flipper_length_mm`) žádnou zásadní
+výhodu.
+
+## e) Nejlepší model
+
+**Souhrn:** Nejlepším modelem je jednoznačně **Model 4**, a to protože
+vizuálně nejlépe kopíruje bimodalitu pozorovaných dat. V rámci křížové
+validace vykazuje nejmenší absolutní chybu a v ELPD statistice je oproti
+3. modelu lepší o více jak dvě směrodatné odchylky. Ukazuje se, že pro
+přesnou predikci hmotnosti tučňáka je nutné zahrnout kompletní informace
+o částech těla (ploutev i zobák), zatímco samotná znalost druhu není
+natolik efektivní.
+
+# Příklad 11.14 (Penguins on your own)
+
+> Build three different models of penguin `bill_length_mm`. You get to
+> choose which predictors to use, and whether to include interaction
+> terms. Evaluate and compare these models. Which do you prefer and why?
+
+## Návrh modelů
+
+> | 1 \| `bill_length ~ bill_depth_mm` \| <br>
+> | 2 \| `bill_length ~ bill_depth_mm + flipper_length_mm` \| <br>
+> | 3 \| `bill_length ~ bill_depth_mm + flipper_length_mm + body_mass_g` \| <br>
+
+**Zdůvodnění výběru prediktorů:** V této analýze jsme se záměrně
+odklonili od kategorického dělení podle druhů (`species`) a zaměřili
+jsme se čistě na vlastnosti těla tučňáka. Modely jsou záměrně postupně
+obohacovány o další prediktory a jsou rovněž vynechány kategorické
+proměnné pro obecnější výsledky naší analýzy oproti předchozím modelům v
+rámci minulých příkladů.
+
+## Implementace modelů
+
+```{r 11.14_implementation, echo=TRUE}
+
+# Model 1: bill_length_mm ~ bill_depth_mm
+
+my_model1 <- stan_glm(bill_length_mm ~ bill_depth_mm, 
+                     data = penguins_data, family = gaussian,
+                     prior_intercept = normal(45, 10),
+                     prior = normal(0, 2.5, autoscale = TRUE),
+                     prior_aux = exponential(1, autoscale = TRUE),
+                     chains = 4, iter = 10000*2, seed = 12345, refresh = 0)
+
+# Model 2: bill_length_mm ~ bill_depth_mm + flipper_length_mm
+    
+my_model2 <- stan_glm(bill_length_mm ~ bill_depth_mm + flipper_length_mm, 
+                     data = penguins_data, family = gaussian,
+                     prior_intercept = normal(45, 10),
+                     prior = normal(0, 2.5, autoscale = TRUE),
+                     prior_aux = exponential(1, autoscale = TRUE),
+                     chains = 4, iter = 10000*2, seed = 12345, refresh = 0)
+
+# Model 3: bill_length_mm ~ bill_depth_mm + flipper_length_mm + body_mass_g
+
+my_model3 <- stan_glm(bill_length_mm ~ bill_depth_mm + flipper_length_mm + body_mass_g,  
+                     data = penguins_data, family = gaussian,
+                     prior_intercept = normal(45, 10),
+                     prior = normal(0, 2.5, autoscale = TRUE),
+                     prior_aux = exponential(1, autoscale = TRUE),
+                     chains = 4, iter = 10000*2, seed = 12345, refresh = 0)
+    
+```
+
+## Evaluace modelu
+
+```{r 11.14_evaluation, echo=FALSE}
+
+pp_check(my_model1) + ggtitle("M1: bill_length_mm ~ bill_depth_mm")
+pp_check(my_model2) + ggtitle("M2: bill_length_mm ~ bill_depth_mm + flipper_length_mm")
+pp_check(my_model3) + ggtitle("M3: bill_length_mm ~ bill_depth_mm + flipper_length_mm + body_mass_g")
+
+my_penguins_complete <- penguins_data %>% select(bill_length_mm, bill_depth_mm, flipper_length_mm, body_mass_g) %>% na.omit()
+
+# Křížová validace
+
+my_cv1 <- prediction_summary_cv(model = my_model1, data = my_penguins_complete, k = 10)
+
+my_cv2 <- prediction_summary_cv(model = my_model2, data = my_penguins_complete, k = 10)
+
+my_cv3 <- prediction_summary_cv(model = my_model3, data = my_penguins_complete, k = 10)
+
+my_cv_comparison <- bind_rows(my_cv1$cv %>% mutate(model = "Model 1"),
+                              my_cv2$cv %>% mutate(model = "Model 2"),
+                              my_cv3$cv %>% mutate(model = "Model 3")) %>%
+    select(model, mae, mae_scaled, within_50, within_95) %>% arrange(mae)
+
+# ELPD
+
+set.seed(12345)
+
+my_loo1 <- loo(my_model1)
+my_loo2 <- loo(my_model2)
+my_loo3 <- loo(my_model3)
+
+loo_compare(my_loo1, my_loo2, my_loo3)
+
+```
+
+## Závěrečné zhodnocení
+
+**Závěr:** Na základě vizuální kontroly `pp_check` je zřejmé, že
+základní Model 1 selhává ve vysvětlení variability délky zobáku, zatímco
+Modely 2 a 3, zahrnující další tělesné parametry, kopírují reálná data
+mnohem věrněji. Tento vizuální dojem jednoznačně potvrzuje i křížová
+validace, která ukazuje trend zlepšování přesnosti s rostoucí
+komplexitou modelu. Zatímco Model 1 vykazuje nejvyšší chybovost
+(přibližně *2,76 mm*), přidání proměnné pro strukturální velikost (délka
+ploutve) v Modelu 2 snížilo chybu skokově na *1,75 mm*. Nejlepších
+výsledků však dosáhl Model 3, který k hloubce a ploutvi přidal i
+hmotnost (`body_mass_g`), čímž srazil chybu na *1,47 mm*. Všechny modely
+si přitom zachovávají spolehlivou kalibraci intervalů spolehlivosti.
+Vzhledem k tomu, že i porovnání ELPD podporuje tento závěr, vybíráme
+jako nejlepší **Model 3**
+(`bill_length ~ bill_depth + flipper_length + body_mass_g`). Ačkoliv
+jsou délka ploutve a hmotnost korelující proměnné a mohli bychom
+zvažovat riziko multikolinearity, výsledky validace ukazují, že hmotnost
+nese unikátní informaci o délce zobáku nad rámec délky ploutve, což
+ospravedlňuje použití tohoto komplexnějšího modelu pro dosažení
+maximální prediktivní přesnosti. Přidáváním základních charakteristik o
+těle tučňáka postupně zmenšovalo chybu a popis vysvětlované proměnné je
+přesnější.

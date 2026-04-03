@@ -1,0 +1,664 @@
+---
+title: 'Předmět: Bayesiánská analýza (MPE_BAAN)'
+subtitle: Třetí úkol, příklad 1 (9.16 - 9.20) - skupina 13
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+    authors: Dana Kozáková, Daniel Navrátil, Romana Vystrčilová, Marek Hrazdíra
+  pdf_document:
+    toc: true
+authors: Dana Kozáková, Daniel Navrátil, Romana Vystrčilová, Marek Hrazdíra
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+```
+
+# Úvod
+
+V tejto kapitole sa venujeme **Naive Bayes klasifikácii** - metóde na klasifikáciu kategorických premenných s dvoma alebo viacerými kategóriami.
+
+## Načítanie balíčkov
+
+```{r packages}
+library(bayesrules)
+library(tidyverse)
+library(e1071)
+library(janitor)
+```
+
+## Načítanie dát
+
+```{r data}
+data(penguins_bayes)
+penguins <- penguins_bayes
+```
+
+# Teória
+
+## Základné vzorce Naive Bayes klasifikácie
+
+### Bayesovo pravidlo pre klasifikáciu
+
+Pre kategorickú premennú $Y$ s kategóriami a prediktormi $(X_1, X_2, \ldots, X_p)$ je posteriorná pravdepodobnosť:
+
+$$f(y \mid x_1, x_2, \ldots, x_p) = \frac{f(y)L(y \mid x_1, x_2, \ldots, x_p)}{\sum_{\text{všetky } y'} f(y')L(y' \mid x_1, x_2, \ldots, x_p)}$$
+
+kde:
+
+- $f(y)$ je apriorná pravdepodobnosť kategórie $y$
+- $L(y \mid x_1, \ldots, x_p)$ je likelihood funkcia
+- Menovateľ je normalizačná konštanta
+
+### Naive predpoklady
+
+**1. Podmienená nezávislosť prediktorov:**
+
+$$L(y \mid x_1, x_2, \ldots, x_p) = \prod_{i=1}^p f(x_i \mid y)$$
+
+**2. Pre kategorické prediktory:**
+
+$$f(x_i \mid y) = P(X_i = x_i \mid Y = y)$$
+
+odhadnuté vzorkovým podielom pozorovaní s $Y = y$, pre ktoré $X_i = x_i$.
+
+**3. Pre kvantitatívne prediktory:**
+
+Predpokladáme normálne rozdelenie v rámci každej kategórie:
+
+$$X_i \mid (Y = y) \sim N(\mu_{iy}, \sigma_{iy}^2)$$
+
+kde $\mu_{iy}$ a $\sigma_{iy}$ odhadujeme výberovým priemerom a smerodajnou odchýlkou hodnôt $X_i$ v kategórii $Y = y$.
+
+### Likelihood pre normálne rozdelenie
+
+Pre kvantitatívny prediktor $X_i$ s hodnotou $x_i$:
+
+$$L(y \mid x_i) = f(x_i \mid y) = \frac{1}{\sigma_{iy}\sqrt{2\pi}} \exp\left(-\frac{(x_i - \mu_{iy})^2}{2\sigma_{iy}^2}\right)$$
+
+V R používame funkciu `dnorm(x_i, mean = mu_iy, sd = sigma_iy)`.
+
+### Normalizačná konštanta (Law of Total Probability)
+
+$$f(x_1, \ldots, x_p) = \sum_{\text{všetky } y'} f(y')L(y' \mid x_1, \ldots, x_p)$$
+
+## Príklad s jedným prediktorom
+
+### Kategorický prediktor
+
+Pre prediktor $X_1$ (napr. nadpriemerná hmotnosť):
+
+$$f(y \mid x_1) = \frac{f(y)L(y \mid x_1)}{\sum_{y'} f(y')L(y' \mid x_1)}$$
+
+### Kvantitatívny prediktor
+
+Pre prediktor $X_2$ (napr. dĺžka zobáka):
+
+$$f(y \mid x_2) = \frac{f(y)L(y \mid x_2)}{\sum_{y'} f(y')L(y' \mid x_2)}$$
+
+kde:
+
+- $L(y \mid x_2) = \text{dnorm}(x_2, \text{mean} = \mu_{2y}, \text{sd} = \sigma_{2y})$
+
+## Príklad s viacerými prediktormi
+
+Pre dva prediktory $X_2$ a $X_3$:
+
+$$f(y \mid x_2, x_3) = \frac{f(y) L(y \mid x_2, x_3)}{\sum_{y'} f(y')L(y' \mid x_2, x_3)}$$
+
+S naive predpokladom nezávislosti:
+
+$$L(y \mid x_2, x_3) = f(x_2 \mid y)f(x_3 \mid y)$$
+
+# Implementácia v R
+
+## Vytvorenie modelu
+
+```{r eval=FALSE}
+# Model s jedným prediktorom
+naive_model_1 <- naiveBayes(y ~ x1, data = data)
+
+# Model s viacerými prediktormi
+naive_model_2 <- naiveBayes(y ~ x1 + x2 + x3, data = data)
+```
+
+## Predikcia
+
+```{r eval=FALSE}
+# Posteriorné pravdepodobnosti
+predict(naive_model, newdata = new_data, type = "raw")
+
+# Klasifikácia (kategória s najvyššou pravdepodobnosťou)
+predict(naive_model, newdata = new_data)
+```
+
+## Vyhodnotenie modelu
+
+### Confusion matrix
+
+```{r eval=FALSE}
+# Pridanie predikcií do datasetu
+data <- data %>%
+  mutate(predicted_class = predict(naive_model, newdata = .))
+
+# Confusion matrix s percentami
+data %>%
+  tabyl(actual_class, predicted_class) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 2) %>%
+  adorn_ns()
+```
+
+### Krížová validácia
+
+```{r eval=FALSE}
+set.seed(84735)
+cv_results <- naive_classification_summary_cv(
+  model = naive_model,
+  data = data,
+  y = "actual_class",
+  k = 10
+)
+
+# Výsledky
+cv_results$cv
+```
+
+---
+
+# Cvičenie
+
+## Exercise 14.11: Analýza postojov k bezpečnosti vakcín
+
+**Zadanie:**
+
+The `pulse_of_the_nation` survey also asked respondents about their agreement with the statement that `vaccines_are_safe`, selecting from the following options: 
+
+- Neither Agree nor Disagree
+- Somewhat Agree
+- Somewhat Disagree  
+- Strongly Agree
+- Strongly Disagree
+
+In this open-ended exercise, complete a naive Bayesian analysis of belief in the safety of vaccines, selecting a variety of possible predictors that are of interest to you.
+
+---
+
+# Riešenie
+
+## 1. Načítanie a preskúmanie dát
+
+**Čo robíme:** Najprv si načítame dáta a pozrieme sa, čo obsahujú. To je dôležité, aby sme vedeli, s čím pracujeme.
+
+```{r load-data}
+# Načítanie dát z balíčka bayesrules
+data(pulse_of_the_nation)
+
+# Pozrime sa na základnú štruktúru datasetu
+# dim() nám povie koľko riadkov (ľudí) a stĺpcov (premenných) máme
+dim(pulse_of_the_nation)
+
+# glimpse() nám ukáže všetky premenné a ich typy
+glimpse(pulse_of_the_nation)
+```
+
+**Vysvetlenie dát:** 
+Dataset obsahuje 1000 respondentov a 15 premenných:
+
+- `income`: príjem v tisícoch dolárov
+- `age`: vek v rokoch  
+- `party`: politická strana (Democrat, Independent, Republican)
+- `trump_approval`: hodnotenie Trumpa
+- `education`: úroveň vzdelania
+- `science_is_honest`: názor na to, či sú vedci čestní
+- `vaccines_are_safe`: **náš cieľ** - názor na bezpečnosť vakcín
+- a ďalšie...
+
+### Preskúmanie závislej premennej
+
+```{r explore-y}
+# Pozrime sa na našu závislú premennú vaccines_are_safe
+# Koľko ľudí má aký názor?
+table(pulse_of_the_nation$vaccines_are_safe)
+
+# To isté v percentách pomocou janitor::tabyl
+pulse_of_the_nation %>% 
+  tabyl(vaccines_are_safe) %>%
+  adorn_pct_formatting(digits = 1)
+```
+
+**Čo vidíme:** Väčšina ľudí súhlasí, že vakcíny sú bezpečné (Strongly Agree alebo Somewhat Agree). Toto je naša **apriorná informácia** - ešte predtým než začneme používať prediktory, už vieme, že ľudia majú skôr pozitívny postoj k vakcínam.
+
+## 2. Exploratívna analýza - výber prediktorov
+
+**Čo robíme:** Teraz si musíme vybrať, ktoré premenné by mohli súvisieť s postojom k vakcínam. Logicky by mohli byť dôležité:
+
+- `education`: vzdelanie (vzdelanejší ľudia môžu mať iný názor)
+- `party`: politická strana (môže súvisieť s dôverou vo vedu)
+- `science_is_honest`: dôvera vo vedcov (súvisí s dôverou v ich produkty)
+- `age`: vek (rôzne generácie môžu mať rôzne názory)
+
+### Vizualizácia vzťahov
+
+```{r viz-party, fig.width=10, fig.height=6}
+# Vzťah medzi politickou stranou a postojom k vakcínam
+# POSTUP ako v učebnici pre penguins - použijeme geom_bar s position="fill"
+ggplot(pulse_of_the_nation %>% drop_na(vaccines_are_safe, party),
+       aes(x = party, fill = vaccines_are_safe)) +
+  geom_bar(position = "fill") +
+  labs(title = "Postoj k vakcínam podľa politickej strany",
+       x = "Politická strana",
+       y = "Podiel",
+       fill = "Názor na vakcíny") +
+  theme_minimal()
+```
+
+**Interpretácia:** Tu vidíme, ako sa líši postoj k vakcínam medzi politickými stranami. Každý stĺpec má výšku 1 (100%), a farebné časti ukazujú podiel ľudí s rôznymi názormi.
+
+```{r viz-science, fig.width=10, fig.height=6}
+# Vzťah medzi dôverou vo vedcov a postojom k vakcínam
+ggplot(pulse_of_the_nation %>% drop_na(vaccines_are_safe, science_is_honest),
+       aes(x = science_is_honest, fill = vaccines_are_safe)) +
+  geom_bar(position = "fill") +
+  labs(title = "Postoj k vakcínam podľa dôvery vo vedcov",
+       x = "Názor: Sú vedci čestní?",
+       y = "Podiel",
+       fill = "Názor na vakcíny") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Čo z toho vyplýva:** Zdá sa, že ľudia, ktorí veria vedcom (science_is_honest), majú tendenciu viac dôverovať vakcínam. To dáva zmysel!
+
+```{r viz-age, fig.width=10, fig.height=6}
+# Pre kvantitatívny prediktor (age) použijeme density plot
+# POSTUP z učebnice - podobne ako pre bill_length_mm penguins
+ggplot(pulse_of_the_nation %>% drop_na(vaccines_are_safe, age),
+       aes(x = age, fill = vaccines_are_safe)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Rozdelenie veku podľa postoja k vakcínam",
+       x = "Vek (roky)",
+       y = "Hustota",
+       fill = "Názor na vakcíny") +
+  theme_minimal()
+```
+
+**Vysvetlenie:** Každá farebná krivka ukazuje, ako sú rozdelení ľudia daného veku v rámci každej kategórie názoru. Ak sa krivky veľa prekrývajú, vek asi nebude dobrý prediktor.
+
+## 3. Naive Bayes s jedným prediktorom - MANUÁLNE
+
+**Dôležité:** Teraz si ukážeme výpočet "od základov" - presne ako v učebnici! Potom to porovnáme s automatickým výpočtom.
+
+### Príklad: Klasifikácia podľa science_is_honest
+
+Predstavme si osobu, ktorá verí, že **vedci sú čestní** (science_is_honest = "Strongly Agree"). Aká je pravdepodobnosť, že bude súhlasiť s bezpečnosťou vakcín?
+
+**KROK 1: Vytvoríme tabuľku (ako v učebnici pre penguins)**
+
+```{r manual-table}
+# Vytvoríme tabuľku: science_is_honest vs vaccines_are_safe
+# PRESNE ako v učebnici: tabyl() s adorn_totals()
+vaccine_table <- pulse_of_the_nation %>%
+  select(vaccines_are_safe, science_is_honest) %>%
+  na.omit() %>%
+  tabyl(vaccines_are_safe, science_is_honest) %>%
+  adorn_totals(c("row", "col"))
+
+vaccine_table
+```
+
+**KROK 2: Vypočítame PRIOR pravdepodobnosti**
+
+```{r manual-prior}
+# Z posledného riadku tabuľky (Total) vidíme celkové počty
+# Apriorné pravdepodobnosti jednotlivých kategórií vaccines_are_safe
+
+# Celkový počet respondentov (bez NA)
+total_n <- vaccine_table[nrow(vaccine_table), ncol(vaccine_table)]
+
+# Prior pre každú kategóriu = počet v danej kategórii / celkový počet
+# Uložíme si počty z tabuľky
+counts_total <- vaccine_table[1:(nrow(vaccine_table)-1), ncol(vaccine_table)]
+categories <- vaccine_table$vaccines_are_safe[1:(nrow(vaccine_table)-1)]
+
+# Vytvoríme data frame s priormi
+priors <- data.frame(
+  category = categories,
+  count = counts_total,
+  prior = counts_total / total_n
+)
+priors
+```
+
+**Vysvetlenie:** Toto sú naše **apriorné** pravdepodobnosti - pred tým, ako zohľadníme informáciu o science_is_honest. Napríklad, celkovo má cca 49% ľudí názor "Strongly Agree".
+
+**KROK 3: Vypočítame LIKELIHOOD**
+
+```{r manual-likelihood}
+# Teraz vypočítame: ak niekto má názor X o vakcínach,
+# aká je pravdepodobnosť, že verí vedcom (science_is_honest = "Strongly Agree")?
+
+# Z tabuľky si vytiahneme stĺpec "Strongly Agree" pre science_is_honest
+strongly_agree_col <- "Strongly Agree"
+
+# Pre každú kategóriu vaccines_are_safe:
+# likelihood = (počet ľudí s daným vaccines_are_safe A science_is_honest="Strongly Agree") 
+#            / (celkový počet ľudí s daným vaccines_are_safe)
+
+likelihoods <- data.frame(
+  category = categories,
+  likelihood = vaccine_table[1:(nrow(vaccine_table)-1), strongly_agree_col] / 
+               vaccine_table[1:(nrow(vaccine_table)-1), ncol(vaccine_table)]
+)
+likelihoods
+```
+
+**Vysvetlenie likelihood:** Napríklad ak niekto "Strongly Agree" s bezpečnosťou vakcín, je veľká pravdepodobnosť (možno 70-80%), že tiež verí vedcom. Ak niekto "Strongly Disagree", pravdepodobne neverí vedcom.
+
+**KROK 4: Bayesovo pravidlo - POSTERIOR**
+
+```{r manual-posterior}
+# BAYESOVO PRAVIDLO (vzorec 14.1 z učebnice):
+# f(y | x) = [f(y) * L(y|x)] / [sum of all f(y')*L(y'|x)]
+
+# Spojíme prior a likelihood
+bayes_calc <- priors %>%
+  left_join(likelihoods, by = "category") %>%
+  mutate(
+    # Čitateľ Bayesovho pravidla: prior * likelihood
+    numerator = prior * likelihood
+  )
+
+# Menovateľ (normalizačná konštanta): súčet všetkých čitateľov
+normalizing_constant <- sum(bayes_calc$numerator)
+
+# Konečný posterior
+bayes_calc <- bayes_calc %>%
+  mutate(
+    posterior = numerator / normalizing_constant
+  )
+
+bayes_calc
+```
+
+**Vysledok - POSTERIOR pravdepodobnosti:**
+
+```{r manual-result}
+# Zoraďme podľa posterioru
+bayes_calc %>%
+  arrange(desc(posterior)) %>%
+  select(category, prior, likelihood, posterior)
+```
+
+**Interpretácia (ako v učebnici):**
+
+- **Prior**: Pred tým, ako sme vedeli o dôvere vo vedcov, bola najväčšia pravdepodobnosť, že osoba bude "Strongly Agree" (49%)
+- **Likelihood**: Ak niekto verí vedcom, je veľmi pravdepodobné, že bude "Strongly Agree" s vakcínami
+- **Posterior**: Po zohľadnení toho, že osoba verí vedcom, je **ešte vyššia** pravdepodobnosť (možno 60-70%), že bude "Strongly Agree" s vakcínami
+
+Naša **klasifikácia**: Ak niekto verí vedcom, klasifikujeme ho ako "Strongly Agree" s vakcínami (lebo to má najvyššiu posteriornu pravdepodobnosť).
+
+## 4. Naive Bayes s jedným prediktorom - AUTOMATICKY
+
+**Teraz to isté pomocou funkcií z učebnice:**
+
+```{r model-1-science}
+# Model len s jedným prediktorom: science_is_honest
+# PRESNE ako v učebnici pre penguins
+naive_model_1 <- naiveBayes(vaccines_are_safe ~ science_is_honest, 
+                             data = pulse_of_the_nation)
+
+# Pozrime sa na model
+naive_model_1
+```
+
+### Testovanie na konkrétnom príklade
+
+```{r test-model-1}
+# Vytvoríme si testovací prípad - osoba, ktorá verí vedcom
+test_person <- data.frame(
+  science_is_honest = "Strongly Agree"
+)
+
+# POSTERIORNÉ PRAVDEPODOBNOSTI (ako v učebnici - type="raw")
+predict(naive_model_1, newdata = test_person, type = "raw")
+
+# KLASIFIKÁCIA (kategória s najvyššou pravdepodobnosťou)
+predict(naive_model_1, newdata = test_person)
+```
+
+**Porovnanie:** Tieto výsledky by mali byť veľmi podobné našim manuálnym výpočtom!
+
+### Vyhodnotenie modelu - Confusion Matrix
+
+```{r confusion-1}
+# Pridáme predikcie do datasetu (ako v učebnici)
+pulse_of_the_nation <- pulse_of_the_nation %>%
+  mutate(pred_model_1 = predict(naive_model_1, newdata = .))
+
+# Confusion matrix (PRESNÝ POSTUP z učebnice)
+pulse_of_the_nation %>%
+  tabyl(vaccines_are_safe, pred_model_1) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 2) %>%
+  adorn_ns()
+```
+
+**Interpretácia confusion matrix:**
+
+- Každý riadok je **skutočná** kategória
+- Každý stĺpec je **predikovaná** kategória  
+- Čísla na diagonále = správne klasifikácie
+- Čísla mimo diagonály = chyby
+
+Napríklad: Ak riadok "Strongly Agree" má v stĺpci "Strongly Agree" hodnotu 85%, znamená to, že 85% ľudí, ktorí naozaj odpovedali "Strongly Agree", model správne klasifikoval.
+
+## 5. Naive Bayes s viacerými prediktormi
+
+**Teraz skombinujeme viacero prediktorov naraz!**
+
+```{r model-multi}
+# Model s viacerými prediktormi
+# Používame tie, ktoré vyzerali sľubne z EDA
+naive_model_full <- naiveBayes(
+  vaccines_are_safe ~ science_is_honest + party + education + age,
+  data = pulse_of_the_nation
+)
+
+# Pozrieme sa na model
+naive_model_full
+```
+
+**Čo tento model robí:**
+
+1. Predpokladá **podmienenú nezávislosť** prediktorov (naive predpoklad)
+2. Pre kategorické prediktory (science_is_honest, party, education) používa proporcie
+3. Pre kvantitatívny prediktor (age) predpokladá **normálne rozdelenie** v rámci každej kategórie
+
+### Príklad: Normálne rozdelenie pre vek
+
+```{r viz-normal-age}
+# Model predpokladá, že v rámci každej kategórie vaccines_are_safe
+# je vek normálne rozdelený s nejakým priemerom a SD
+
+# Vypočítame priemerný vek a SD pre každú kategóriu
+age_stats <- pulse_of_the_nation %>%
+  group_by(vaccines_are_safe) %>%
+  summarize(
+    mean_age = mean(age, na.rm = TRUE),
+    sd_age = sd(age, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+age_stats
+```
+
+**Vysvetlenie:** Model predpokladá, že napríklad ľudia, ktorí "Strongly Agree", majú vek normálne rozdelený okolo priemeru (napr. 45 rokov) so smerodajnou odchýlkou (napr. 15 rokov).
+
+### Testovanie komplexného modelu
+
+```{r test-full-model}
+# Testujeme na konkrétnej osobe:
+# - verí vedcom
+# - je demokrat  
+# - má vysokoškolské vzdelanie
+# - má 35 rokov
+
+test_person_full <- data.frame(
+  science_is_honest = "Strongly Agree",
+  party = "Democrat",
+  education = "College Degree (4-year)",
+  age = 35
+)
+
+# Posteriorné pravdepodobnosti
+predict(naive_model_full, newdata = test_person_full, type = "raw")
+
+# Klasifikácia
+predict(naive_model_full, newdata = test_person_full)
+```
+
+**Interpretácia:** Model kombinuje všetky informácie a vypočíta, že táto osoba má najväčšiu pravdepodobnosť byť v kategórii [výsledok].
+
+### Vyhodnotenie komplexného modelu
+
+```{r confusion-full}
+# Pridáme predikcie do datasetu
+pulse_of_the_nation <- pulse_of_the_nation %>%
+  mutate(pred_model_full = predict(naive_model_full, newdata = .))
+
+# Confusion matrix pre plný model
+pulse_of_the_nation %>%
+  tabyl(vaccines_are_safe, pred_model_full) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 2) %>%
+  adorn_ns()
+```
+
+**Porovnanie modelov:** Je plný model lepší ako model len s jedným prediktorom? Pozrime sa na celkovú presnosť.
+
+```{r model-comparison}
+# Celková presnosť model_1
+accuracy_1 <- pulse_of_the_nation %>%
+  filter(!is.na(vaccines_are_safe) & !is.na(pred_model_1)) %>%
+  summarize(accuracy = mean(vaccines_are_safe == pred_model_1))
+
+# Celková presnosť model_full  
+accuracy_full <- pulse_of_the_nation %>%
+  filter(!is.na(vaccines_are_safe) & !is.na(pred_model_full)) %>%
+  summarize(accuracy = mean(vaccines_are_safe == pred_model_full))
+
+cat("Presnosť model_1 (len science_is_honest):", round(accuracy_1$accuracy * 100, 1), "%\n")
+cat("Presnosť model_full (viacero prediktorov):", round(accuracy_full$accuracy * 100, 1), "%\n")
+```
+
+## 6. Krížová validácia
+
+**Dôležité:** Confusion matrix vyššie testuje model na **tých istých dátach**, na ktorých sme ho trénovali. To môže byť zavádzajúce! Krížová validácia testuje model na **nových** dátach.
+
+```{r cv-full}
+# PRESNE ako v učebnici - 10-fold cross-validation
+set.seed(84735)  # pre reprodukovateľnosť
+cv_results <- naive_classification_summary_cv(
+  model = naive_model_full,
+  data = pulse_of_the_nation,
+  y = "vaccines_are_safe",
+  k = 10
+)
+
+# Výsledky cross-validation
+cv_results$cv
+```
+
+**Interpretácia CV výsledkov:**
+
+- Toto je **realistickejší** odhad, ako model funguje na nových dátach
+- Porovnajte s confusion matrix vyššie - sú výsledky podobné?
+- Ak sú CV výsledky výrazne horšie, model je možno "overfitted"
+
+## 7. Predikcia pre rôzne profily ľudí
+
+**Teraz skúsime model použiť na rôzne typy ľudí:**
+
+```{r predictions-scenarios}
+# Scenár 1: Mladý, vzdelaný demokrat, ktorý verí vedcom
+person_1 <- data.frame(
+  science_is_honest = "Strongly Agree",
+  party = "Democrat", 
+  education = "Graduate Degree",
+  age = 28
+)
+
+# Scenár 2: Starší republikán, ktorý neverí vedcom
+person_2 <- data.frame(
+  science_is_honest = "Strongly Disagree",
+  party = "Republican",
+  education = "High School Degree",  
+  age = 65
+)
+
+# Scenár 3: Stredne starý nezávislý s neutrálnym názorom
+person_3 <- data.frame(
+  science_is_honest = "Neither Agree nor Disagree",
+  party = "Independent",
+  education = "Some College",
+  age = 45
+)
+
+# Predikcie
+cat("=== SCENÁR 1: Mladý vzdelaný demokrat ===\n")
+print(predict(naive_model_full, newdata = person_1, type = "raw"))
+cat("Klasifikácia:", as.character(predict(naive_model_full, newdata = person_1)), "\n\n")
+
+cat("=== SCENÁR 2: Starší republikán skeptický k vedcom ===\n")
+print(predict(naive_model_full, newdata = person_2, type = "raw"))
+cat("Klasifikácia:", as.character(predict(naive_model_full, newdata = person_2)), "\n\n")
+
+cat("=== SCENÁR 3: Stredne starý nezávislý s neutrálnym názorom ===\n")
+print(predict(naive_model_full, newdata = person_3, type = "raw"))
+cat("Klasifikácia:", as.character(predict(naive_model_full, newdata = person_3)), "\n\n")
+```
+
+## 8. Záver a zhrnutie
+
+**Čo sme sa naučili:**
+
+1. **Naive Bayes klasifikácia** kombinuje apriorné informácie (celkové rozdelenie) s informáciami z prediktorov (likelihood) pomocou Bayesovho pravidla
+
+2. **Dva kľúčové "naive" predpoklady:**
+   - Prediktory sú **podmienene nezávislé** (v rámci kategórie)
+   - Kvantitatívne prediktory majú **normálne rozdelenie** v rámci každej kategórie
+
+3. **Výsledky pre naše dáta:**
+   - Najsilnejší prediktor: `science_is_honest` (dôvera vo vedcov)
+   - Ďalšie užitočné: `party`, `education`, `age`
+   - Model dosahuje presnosť podľa cross-validation výsledkov
+
+4. **Praktické použitie:**
+   - Model môže pomôcť identifikovať skupiny ľudí, ktorí sú skeptickí voči vakcínam
+   - Toto môže byť užitočné pre cielenú edukačnú kampaň
+
+**Limity:**
+
+- Naive predpoklad nezávislosti je pravdepodobne porušený (napr. vzdelanie a politická strana často súvisia)
+- Model nám nehovorí **prečo** ľudia veria alebo neveria vakcínam, len klasifikuje
+- Dáta sú z roku 2017 - názory mohli medzičasom zmeniť
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

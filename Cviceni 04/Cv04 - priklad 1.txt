@@ -1,0 +1,295 @@
+---
+title: "Bayesovská analýza - Gamma-Poisson model"
+subtitle: "Cvičení 5.5 a 5.6: Analýza početnosti textových správ"
+author: "Dana Kozáková"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 8, fig.height = 5)
+```
+
+## Úvod
+
+Tento dokument obsahuje riešenie cvičení 5.5 a 5.6 z knihy [Bayes Rules!](https://www.bayesrulesbook.com/chapter-5#exercises-4) 
+Modelovanie rýchlosti príjmu textových správ za hodinu pomocou Gamma-Poisson modelu. Najprv apriórna informácia, potom dáta. Následne posteriórny model.
+
+**Zdroj:**
+
+- [Bayes Rules! - Kapitola 5](https://www.bayesrulesbook.com/chapter-5#exercises-4)
+
+```{r libraries, echo =FALSE}
+library(bayesrules)
+library(janitor)
+```
+
+## Exercise 5.5: Nastavenie priorného modelu
+
+### Zadanie
+
+> Nech náhodná premenná $\lambda$ predstavuje počet textových správ, ktoré ľudia dostanú za hodinu. Najprv, predpokladaj, že typický počet správ za hodinu je 5 so štandardnou odchýlkou 0,25 správ.<br>
+> <ol type = "a"><li> Vylaď a zobraz graficky vhodný Gamma($s$,$r$) apriórny model pre $\lambda$.</li>
+> <li>Aká je pravdepodobnosť, že počet textových správ za hodinu je véčší ako 10? (Nápoveda: pozri $pgamma()$)</li></ol>
+
+
+### Riešenie:
+Náhodná premenná $\lambda$ reprezentuje rýchlosť príjmu textových správ za hodinu. Predpokladáme, že typický počet správ za hodinu je 5 so smerodajnou odchýlkou 0,25 správ.
+
+Pre modelovanie premennej $\lambda$ sú vhodné modely: *F*, *Weibull* alebo *Gamma*. Aby bola konštrukcia posterior modelu jednoduchá a priama, využijeme konjugovaný Gamma model. 
+
+### a) Nastavenie priorného modelu Gamma pre modelovanie hodnoty $\lambda$
+*Poznámka: iba v rámci Poissonovho modelu platí, že stredná hodnota sa rovná rozptylu.*
+
+**Z požiadavky v zadaní:**
+
+- Stredná hodnota E(\lambda) = 5
+- Smerodajná odchýlka SD(\lambda) = 0,25
+- Rozptyl Var(\lambda) = 0,25² = 0,0625
+
+> **Pre Gamma rozdelenie platí:**
+>\begin{equation}
+\begin{split}
+E(\lambda) & = \frac{s}{r} \\
+\text{Var}(\lambda) & = \frac{s}{r^2} \\
+\end{split}
+\tag{E & Var for Gamma}
+\end{equation}
+
+> **Z toho vyplýva:**
+>\begin{equation}
+\begin{split}
+\frac{s}{r} = 5  ---> s & = 5 * r\\
+frac{s}{r^2} = 0,0625   --> s & = 0.0625 * r^2\\
+5 * r & = 0.0625 * r^2 \\
+\frac{5}{0.0625} & = r \\
+r & = 80 \\
+s & = 5 *80 \\
+\end{split}
+\end{equation}
+
+> **Všeobecne:**<br>
+> - je dané E($\lambda$) a Var($\lambda$)
+\begin{equation}
+\begin{split}
+\frac{s}{r} = E  ---> s & = E * r\\
+\frac{s}{r^2} = Var   --> s & = Var * r^2\\
+E * r & = Var * r^2 \\
+\frac{E}{Var} * r & = r^2 \\
+r & = \frac{E}{Var} \\
+s & = E * r \\
+\end{split}
+\end{equation}
+
+
+```{r prior-setup}
+# Parametre priorného modelu
+
+E <- 5
+SD <- 0.25
+Var <- SD^2
+
+r <- E/Var
+s <- E*r
+
+cat ('Gamma model má parametre: Gamma(', s, ', ', r, ')', '\n', sep = "")
+
+# Gamma model v grafe
+plot_gamma(shape = s, rate = r, mean = TRUE, mode = TRUE)
+
+# Číselné charakteristiky pre Gamma model
+summarize_gamma(s, r)
+```
+Tu vidíme, že model má skutočne strednú hodnotu požadovaných 5 správ a odchýlku 0,25.
+Modus sa nerovná mediánu, nie je to presne symetrické rozdelenie.
+
+### b) Pravdepodobnosť, P($\lambda$ > 10)
+Pravdepodobnosť, že v tomto apriornom modeli bude mať viac ako 10 správ
+```{r prior-probability}
+# Pravdepodobnosť, že λ > 10
+prob_greater_10 <- pgamma(10, shape = s, rate = r, lower.tail = FALSE)
+cat('Pravdepodobnosť viac ako 10 správ za hodinu:',prob_greater_10, '\n')
+```
+
+Apriorná pravdepodobnosť, že počet správ presiahne 10 za hodinu, je `r format(prob_greater_10, scientific = TRUE)`, co je extrémne nízka hodnota.
+
+```{r prior-median-check}
+# "Kontrola" symetrie
+lg <- pgamma(5, shape = s, rate = r, lower.tail = FALSE)
+pg <- pgamma(5, shape = s, rate = r, lower.tail = TRUE)
+
+cat('Pravdepodobnosť - naľavo od strednej hodnoty:', lg, ',', 'napravo od strednej hodnoty:', pg)
+```
+
+## Cvičenie 5.6: Aktualizácia prior modelu dátami
+
+### Zadanie
+
+> Zozbierali sme dáta od 6 priateľov. Dostali nasledujúci počet správ za poslednú hodinu: 7, 3, 8, 9, 10, 12.<br>
+> <ol type = "a"> <li>Vykresliť vierohodnostnú funkciu $\lambda$.</li>
+> <li>Vykresliť priorné pdf, vierohodnostnú funkciu a posteriorné pdf $\lambda$.</li>
+> <li>Použiť `summarize_gamma_poisson()` pre výpočet deskriptívnych štatistík. </li>
+> <li>Komentovať, ako sa zmenilo naše porozumenie λ od prioru k posterioru</li></ol>
+
+### Riešenie: 
+
+### Dátový model
+```{r data}
+# Naše dáta
+y <- c(7, 3, 8, 9, 10, 12)
+```
+
+### a) Vierohodnostná funkcia pre $\lambda$
+> Neznámy hyperparameter $\lambda$ má Gamma rozdelenie.
+> \begin{split}
+\lambda & \sim \text{Gamma}(s, r) .\\
+\end{split}
+
+> Za predpokladu, že poznáme $\lambda$, tak počet správ za hodinu modelujeme Poissonovým rozdelením. T.j. vierohodnostná funkcia je:
+> \begin{split}
+Y | \lambda & {\sim} \text{Pois}(\lambda) \\
+\end{split}
+
+> Označme (Y_1,Y_2,\ldots,Y_n) počet správ v jednotlivých hodinách, od prvej hodiny po $n$.-tú. Počet za jednu hodinu sa može meniť, je  **nezávisle** modelovaný Poissonovým modelom. 
+
+> \begin{split}
+Y_i | \lambda & \stackrel{ind}{\sim} \text{Pois}(\lambda) \\
+\end{split}
+
+> Funkcia hustoty pre toto jedno pozorovanie:
+>\begin{split}
+f(y_i|\lambda) =  \frac{\lambda^{y_i}e^{-\lambda}}{y_i!}\;\; \text{ for } y_i \in \{0,1,2,\ldots\}
+\end{split}
+
+> Neanalyzujeme však každý deň samostatne, využijeme súhrnnú informáciu zo všetkých dní, t.j. máme funkciu združenej hustoty pravdepodobnosti: <br><br>
+> **Združená hustota pravdepodobnosti**<br>
+><ul><li>Nech $(Y_1,Y_2,\ldots,Y_n)$ sú nezávislé pozorovania náhodnej premennej a $\vec{y} = (y_1,y_2,\ldots,y_n)$ je vektor týchto pozorovaní </li>
+><li>$f(y_i | \lambda)$ označuje funkciu hustoty pre jedno pozorovanie $Y_i$.</li></ul>
+>Za predpokladu nezávislosti potom možeme napísať združenú funkciu hustoty pre vektor zistených dát:<br>
+> \begin{equation}
+> f(\vec{y} | \lambda) = \prod_{i=1}^n f(y_i | \lambda) = f(y_1 | \lambda) \cdot f(y_2 | \lambda) \cdot \cdots \cdot f(y_n | \lambda)  .
+> \tag{Joint pmf}
+> \end{equation}
+> Po dosadení vyjadrenia hustoty pre Poissonovo rozdelenie dostávame: <br>
+>\begin{split}
+f(\vec{y} | \lambda) 
+& = \frac{\lambda^{y_1}e^{-\lambda}}{y_1!} \cdot \frac{\lambda^{y_2}e^{-\lambda}}{y_2!} \cdots \frac{\lambda^{y_n}e^{-\lambda}}{y_n!} \\
+& = \frac{\left[\lambda^{y_1}\lambda^{y_2} \cdots \lambda^{y_n}\right] \left[e^{-\lambda}e^{-\lambda} \cdots e^{-\lambda}\right]}{y_1! y_2! \cdots y_n!} \\
+& =\frac{\lambda^{\sum y_i}e^{-n\lambda}}{\prod_{i=1}^n y_i!} \\
+\end{split}
+> Teda máme vierohodnostnú funkciu pre $\lambda$ (tá je rovnaká ako združená hustota, líši sa len pochopením parametra)<br>
+\begin{equation}
+L(\lambda | \vec{y}) = \frac{\lambda^{\sum y_i}e^{-n\lambda}}{\prod_{i=1}^n y_i!} \propto \lambda^{\sum y_i}e^{-n\lambda} \;\; \text{ for } \lambda > 0.
+\tag{likehood}
+\end{equation}
+
+#### Graf pre vierohodnostnú funkciu (likehood)
+
+Tento graf zobrazuje pravdepodobnosť získaných dát za predpokladu, že by parameter $\lambda$ bol postupne z intervalu [0; 20]
+
+```{r likelihood}
+# Vierohodnostná funkcia
+plot_poisson_likelihood(y = y, lambda_upper_bound = 20) # 20 je odhad vzhladom na data, hranica 10 je malo
+```
+
+### b) Vykresliť priorné pdf, vierohodnostnú funkciu a posteriorné pdf pre $\lambda$
+**Posteriorný model**
+Posteriorny model je proporcionálny súčinu apriorneho modelu a vierohodnostného modelu: <br>
+
+> Na začiatku apriórny model, ktorý má Gamma rozdelenie: <br>
+> \begin{split}
+> \lambda & \sim \text{Gamma}(s, r) .\\
+> \end{split}
+
+> Jednotlivé pozorovania majú Poissonovo rozdelenie: 
+> \begin{split}
+> Y_i | \lambda & \stackrel{ind}{\sim} \text{Pois}(\lambda) \\
+> \end{split}
+
+> Na základe apriórneho modelu a pozorovania dát --> posteriórny Gamma model:<br>
+>$f(\lambda|\vec{y}) \propto f(\lambda)L(\lambda|\vec{y}) = \frac{r^s}{\Gamma(s)} \lambda^{s-1} e^{-r\lambda} \cdot \frac{\lambda^{\sum y_i}e^{-n\lambda}}{\prod y_i!} \;\;\; \text{ for } \lambda > 0.$
+
+> Možeme vynechať konštanty (zaujíma nás len proporcionalita):
+> \begin{split} 
+f(\lambda|\vec{y}) 
+& \propto \lambda^{s-1} e^{-r\lambda} \cdot \lambda^{\sum y_i}e^{-n\lambda} \\
+& = \lambda^{s + \sum  y_i - 1} e^{-(r+n)\lambda} \\
+\end{split}
+
+> Vidíme, že $\lambda$ je umocnená na ${s + \sum  y_i - 1}$ a $e$ je umocnené na ${-(r+n)\lambda}$, čo odpovedá parametrom Gamma modelu: 
+\begin{equation}
+\lambda|\vec{y} \; \sim \; \text{Gamma}\left(s + \sum y_i, \; r + n\right)  .
+\tag{posterior}
+\end{equation}
+
+#### Graf pre apriórný, vierohodnostný aj posteriórny model
+V grafe vidíme rozdelenia všetkých troch modelov. 
+```{r posterior-plot}
+# Zobrazenie prioru, vierohodnosti a posterioru
+plot_gamma_poisson(shape = s, rate = r, sum_y = sum(y), n = length(y))
+```
+Vidíme, že postreriórny model je váženým priemerom apriórneho a vierohodnostného modelu.
+
+**Porovnanie prior vs. posterior**
+Porovnanie charakteristík apriórneho a posteriórneho Gamma modelu
+```{r comparison}
+# Porovnanie charakteristík
+comparison <- summarize_gamma_poisson(shape = s, rate = r, 
+                                      sum_y = sum(y), n = length(y))
+comparison
+```
+**Interpretácia:** Získané dáta od priateľov posunuli naše presvedčenie o priemernej rýchlosti správ z pôvodných 5 správ/hodinu smerom k vyššiemu počtu, k priemeru 5,22. Posun je len veľmi mierny.
+
+### Len posteriorný model
+Ak chceme detailne pozrieť rozdelenie pre posteriórny model, zobrazíme ho ako apriórny so zmenenými charakteristikami podľa vzťahu pre (posterior).
+```{r posterior-only}
+# Vizualizácia posteriorného modelu
+plot_gamma(shape = s + sum(y), rate = r + length(y), mean = TRUE, mode = TRUE)
+
+# Charakteristiky posterioru
+summarize_gamma(s + sum(y), r + length(y))
+```
+
+## Sekvenčné učenie: Druhá vlna dát
+Ak prídu ďalšie dáata, pokračujeme v učení s ďalšími dátami. Posterior z predošlej analýzy sa stáva novým priorom.
+
+```{r sequential-learning}
+# Uloženie prvého modelu
+mod_1 <- summarize_gamma_poisson(shape = s, rate = r,
+                                 sum_y = sum(y), n = length(y))
+
+# Nové dáta
+y2 <- c(6, 4, 10, 12, 1, 0, 5, 9, 13, 8)
+
+# Posterior z mod_1 sa stáva priorom pre mod_2
+s_2 <- mod_1$shape[2]  # Posteriorný shape
+r_2 <- mod_1$rate[2]   # Posteriorný rate
+
+# Aktualizácia s novými dátami
+plot_gamma_poisson(shape = s_2, rate = r_2,
+                   sum_y = sum(y2), n = length(y2))
+
+# Nový model
+mod_2 <- summarize_gamma_poisson(shape = s_2, rate = r_2,
+                                 sum_y = sum(y2), n = length(y2))
+mod_2
+```
+Znova sa naša predstava o parametri $\lambda$ posunula vyššie na základe ďalších dát.
+
+## Záver
+
+Pomocou bayesovského prístupu:
+
+1. Nastavenie apriórneho modelu
+2. Aktualizácia reálnymi dátami
+3. Demonštrácia sekvenčného učenie s ďalšími pozorovaniami
+
+Bayesovský prístup nám umožňuje priebežne aktualizovať naše presvedčenie s príchodom nových dát. Pri príchode ďalších dát, nezáleží na ich poradí, ani na tom, či prichádzajú postupne alebo sumárne v skupine.
+
+*Poznámka: Pre ďalšie typy modelov pozri [Bayes Rules Book](https://www.bayesrulesbook.com/chapter-5#exercises-4)*
+
